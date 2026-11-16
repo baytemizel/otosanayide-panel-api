@@ -1,0 +1,17 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+parameters:
+    paths:
+        - app
+        - config
+        - routes
+        - database
+    level: 6
+    ignoreErrors:
+        # Ana API ile ayni kural: serbest diziler Z semalariyla dogrulanir.
+        - identifier: missingType.iterableValue
+        # Vendor edilen ActorResolver (ana API kopyasi, panelde kullanilmaz): Larastan model kolonlarini
+        # migration'dan cikarir; personal_access_tokens migration'i ana API deposundadir. Dosya degistirilmez.
+        -
+            identifier: property.notFound
+            path: app/Domain/Auth/ActorResolver.php

@@ -1,0 +1,10 @@
+{
+    "preset": "laravel",
+    "notPath": [
+        "app/Domain",
+        "app/Support",
+        "app/Exceptions",
+        "app/Jobs",
+        "app/Models"
+    ]
+}
