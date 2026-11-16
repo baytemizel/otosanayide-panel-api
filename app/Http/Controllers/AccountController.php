@@ -5,11 +5,13 @@ namespace App\Http\Controllers;
 use App\Exceptions\HttpError;
 use App\Panel\Accounts\AccountAdmin;
 use App\Panel\Approvals\Approvals;
+use App\Panel\Auth\Sessions;
 use App\Panel\Http\Paging;
 use App\Panel\Http\Respond;
 use App\Panel\Http\Shape;
 use App\Panel\Members\MemberAdmin;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use App\Panel\Support\Secret;
 use App\Panel\Support\SupportAccess;
 use App\Support\Tx;
@@ -30,8 +32,10 @@ final class AccountController extends PanelController
             'verified' => ['nullable', 'in:true,false'], 'admin' => ['nullable', 'in:true,false'], 'panelMember' => ['nullable', 'in:true,false'],
             'createdFrom' => ['nullable', 'date'], 'createdTo' => ['nullable', 'date'],
         ]);
-        $q = DB::table('auth_accounts as a')->leftJoin('panel_members as m', 'm.account_id', '=', 'a.id')
-            ->select(['a.id', 'a.email', 'a.email_verified_at', 'a.status', 'a.is_admin', 'a.is_brand_finance', 'a.is_account_erasure_operator', 'a.created_at', 'a.version', 'm.account_id as member_id'])
+        // Panel uyeligi ayri veritabaninda: uye kimlikleri (az sayida) once okunur, filtre ve isaret buradan gelir.
+        $memberIds = MemberAdmin::accountIds();
+        $q = DB::table('auth_accounts as a')
+            ->select(['a.id', 'a.email', 'a.email_verified_at', 'a.status', 'a.is_admin', 'a.is_brand_finance', 'a.is_account_erasure_operator', 'a.created_at', 'a.version'])
             ->orderByDesc('a.created_at');
         if (isset($f['q'])) {
             $term = trim($f['q']);
@@ -49,7 +53,7 @@ final class AccountController extends PanelController
             $q->where('a.is_admin', $f['admin'] === 'true');
         }
         if (isset($f['panelMember'])) {
-            $f['panelMember'] === 'true' ? $q->whereNotNull('m.account_id') : $q->whereNull('m.account_id');
+            $f['panelMember'] === 'true' ? $q->whereIn('a.id', $memberIds) : $q->whereNotIn('a.id', $memberIds);
         }
         if (isset($f['createdFrom'])) {
             $q->where('a.created_at', '>=', Clock::db(Clock::parse($f['createdFrom'])));
@@ -59,14 +63,20 @@ final class AccountController extends PanelController
         }
         $paging = Paging::from($request);
         [$rows, $total] = $paging->run($q);
+        $members = array_flip($memberIds);
+        foreach ($rows as $row) {
+            $row->member_id = isset($members[$row->id]) ? $row->id : null;
+        }
 
         return Respond::page(array_map(AccountAdmin::summary(...), $rows), $paging, $total);
     }
 
     public function show(Request $request, string $id): JsonResponse
     {
-        $a = DB::table('auth_accounts as a')->leftJoin('panel_members as m', 'm.account_id', '=', 'a.id')->where('a.id', $id)
-            ->first(['a.*', 'm.account_id as member_id', 'm.status as member_status']) ?? $this->notFound('Hesap');
+        $a = DB::table('auth_accounts')->where('id', $id)->first() ?? $this->notFound('Hesap');
+        $member = PanelDb::table('panel_members')->where('account_id', $id)->first(['account_id', 'status']);
+        $a->member_id = $member?->account_id;
+        $a->member_status = $member?->status;
         $memberships = DB::table('business_memberships as bm')->leftJoin('businesses as b', 'b.id', '=', 'bm.business_id')->where('bm.user_id', $id)
             ->get(['bm.business_id', 'b.name as business_name', 'bm.role', 'bm.active', 'bm.version', 'bm.created_at']);
         $fence = DB::table('account_fences')->where('owner_uid', $id)->first(['state', 'created_at_ms']);
@@ -144,16 +154,21 @@ final class AccountController extends PanelController
         if ($id === $m->accountId) {
             throw new HttpError(422, 'Kendi hesabını değiştiremezsin.');
         }
-        $isMember = DB::table('panel_members')->where('account_id', $id)->exists();
+        $isMember = PanelDb::table('panel_members')->where('account_id', $id)->exists();
         if ($isMember && ! $m->can('members.manage')) {
             // Panel uyesinin platform hesabini kapatmak panel erisimini de kapatir: uye yonetimi yetkisi gerekir.
             throw new HttpError(403, 'Panel üyesinin hesabı için üye yönetimi yetkisi gerekir.');
         }
-        Tx::run(function () use ($id, $status, $in, $isMember): void {
-            if ($status === 'disabled' && $isMember) {
-                MemberAdmin::assertNotLastSuperAdmin($id);
+        // Panel yazimi once (son super yonetici denetimi, panel oturumlarinin kapanmasi), ana veritabani yazimi son adim:
+        // hesap degisikligi reddedilirse panel oturumlari da acik kalir.
+        PanelDb::tx(function () use ($id, $status, $in, $isMember): void {
+            if ($status === 'disabled') {
+                if ($isMember) {
+                    MemberAdmin::assertNotLastSuperAdmin($id);
+                }
+                Sessions::revokeAccount($id, 'account_disabled');
             }
-            AccountAdmin::setStatus($id, $status, $in['version']);
+            Tx::run(fn () => AccountAdmin::setStatus($id, $status, $in['version']));
         });
         $this->audit($request, $status === 'disabled' ? 'account.disabled' : 'account.enabled', 'account', $id, $in['reason']);
 
@@ -197,7 +212,7 @@ final class AccountController extends PanelController
     {
         $m = $this->member($request);
         $f = $this->query($request, ['scope' => ['nullable', 'in:mine,all'], 'active' => ['nullable', 'in:true,false'], 'accountId' => ['nullable', 'string', 'max:128']]);
-        $q = DB::table('panel_support_grants')->orderByDesc('created_at');
+        $q = PanelDb::table('panel_support_grants')->orderByDesc('created_at');
         if (($f['scope'] ?? 'mine') === 'mine' || ! $m->can('support.manage')) {
             $q->where('member_id', $m->accountId);
         }

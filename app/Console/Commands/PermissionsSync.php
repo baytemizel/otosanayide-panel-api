@@ -4,7 +4,7 @@ namespace App\Console\Commands;
 
 use App\Panel\Audit\Audit;
 use App\Panel\Auth\PermissionSync;
-use App\Support\Tx;
+use App\Panel\Support\PanelDb;
 use Illuminate\Console\Command;
 
 final class PermissionsSync extends Command
@@ -16,7 +16,7 @@ final class PermissionsSync extends Command
     public function handle(): int
     {
         $apply = (bool) $this->option('apply');
-        $report = $apply ? Tx::run(fn () => PermissionSync::run(true)) : PermissionSync::run(false);
+        $report = $apply ? PanelDb::tx(fn () => PermissionSync::run(true)) : PermissionSync::run(false);
         $this->line(json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '{}');
         if ($report['orphanPermissions'] !== []) {
             $this->warn('Katalogda olmayan yetkiler silinmedi: '.implode(', ', $report['orphanPermissions']));

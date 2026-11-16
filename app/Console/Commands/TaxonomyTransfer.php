@@ -3,8 +3,8 @@
 namespace App\Console\Commands;
 
 use App\Panel\Audit\Audit;
+use App\Panel\Support\PanelDb;
 use App\Panel\Taxonomy\Taxonomy;
-use App\Support\Tx;
 use Illuminate\Console\Command;
 
 /**
@@ -26,7 +26,7 @@ final class TaxonomyTransfer extends Command
         if ($direction === 'import') {
             $src = Taxonomy::readSource((string) ($this->option('source') ?: resource_path('data')));
             $apply = (bool) $this->option('apply');
-            $counts = $apply ? Tx::run(fn () => Taxonomy::import($src, true)) : Taxonomy::import($src, false);
+            $counts = $apply ? PanelDb::tx(fn () => Taxonomy::import($src, true)) : Taxonomy::import($src, false);
             $this->table(array_keys($counts), [array_values($counts)]);
             if ($apply) {
                 Audit::console('taxonomy.imported', null, null, null, $counts);

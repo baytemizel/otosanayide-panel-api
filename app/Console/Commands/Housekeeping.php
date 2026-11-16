@@ -4,8 +4,8 @@ namespace App\Console\Commands;
 
 use App\Panel\Approvals\Approvals;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 /**
  * Panel tablolarinin bakimi: suresi dolan erisim jetonu, MFA adimi ve 7 gunden eski kapanmis oturum silinir;
@@ -22,9 +22,9 @@ final class Housekeeping extends Command
         $apply = (bool) $this->option('apply');
         $now = Clock::db();
         $old = Clock::db(Clock::now()->subDays(7));
-        $tokens = DB::table('panel_access_tokens')->where('expires_at', '<=', $now);
-        $challenges = DB::table('panel_login_challenges')->where('expires_at', '<=', $now);
-        $sessions = DB::table('panel_sessions')->where(fn ($w) => $w->where('expires_at', '<=', $old)->orWhere(fn ($x) => $x->whereNotNull('revoked_at')->where('revoked_at', '<=', $old)));
+        $tokens = PanelDb::table('panel_access_tokens')->where('expires_at', '<=', $now);
+        $challenges = PanelDb::table('panel_login_challenges')->where('expires_at', '<=', $now);
+        $sessions = PanelDb::table('panel_sessions')->where(fn ($w) => $w->where('expires_at', '<=', $old)->orWhere(fn ($x) => $x->whereNotNull('revoked_at')->where('revoked_at', '<=', $old)));
         $counts = [
             'accessTokens' => $apply ? $tokens->delete() : $tokens->count(),
             'loginChallenges' => $apply ? $challenges->delete() : $challenges->count(),

@@ -6,7 +6,7 @@ use App\Exceptions\HttpError;
 use App\Panel\Auth\Member;
 use App\Panel\Settings\Settings;
 use App\Panel\Support\Clock;
-use App\Support\Tx;
+use App\Panel\Support\PanelDb;
 use Illuminate\Support\Facades\DB;
 use stdClass;
 
@@ -24,7 +24,7 @@ final class WorkItems
     {
         $q = Queues::get($queue);
         $source = self::sourceRows($q);
-        $existing = DB::table('panel_work_items')->where('queue', $queue)
+        $existing = PanelDb::table('panel_work_items')->where('queue', $queue)
             ->where(static fn ($w) => $w->whereIn('status', self::ACTIVE)->orWhereIn('subject_id', array_keys($source)))
             ->get(['id', 'subject_id', 'status', 'source_state', 'version'])->keyBy('subject_id');
         $now = Clock::now();
@@ -46,7 +46,7 @@ final class WorkItems
             } elseif ($item->source_state !== $row['state']) {
                 $counts['updated']++;
                 if ($apply) {
-                    DB::table('panel_work_items')->where('id', $item->id)->update(['source_state' => $row['state'], 'updated_at' => Clock::db($now)]);
+                    PanelDb::table('panel_work_items')->where('id', $item->id)->update(['source_state' => $row['state'], 'updated_at' => Clock::db($now)]);
                 }
             }
         }
@@ -60,7 +60,7 @@ final class WorkItems
         }
         if ($apply && $insert !== []) {
             foreach (array_chunk($insert, 500) as $chunk) {
-                DB::table('panel_work_items')->insertOrIgnore($chunk);
+                PanelDb::table('panel_work_items')->insertOrIgnore($chunk);
             }
         }
 
@@ -96,13 +96,13 @@ final class WorkItems
     public static function refresh(string $queue, string $subjectId, string $actorId, string $action): void
     {
         $q = Queues::get($queue);
-        $item = DB::table('panel_work_items')->where('queue', $queue)->where('subject_id', $subjectId)->first();
+        $item = PanelDb::table('panel_work_items')->where('queue', $queue)->where('subject_id', $subjectId)->first();
         if ($item === null || ! in_array($item->status, self::ACTIVE, true)) {
             return;
         }
         $state = self::currentState($q, $subjectId);
         if ($state !== null && in_array($state, $q['open'], true)) {
-            DB::table('panel_work_items')->where('id', $item->id)->update(['source_state' => $state, 'last_action' => $action, 'last_actor_id' => $actorId, 'version' => (int) $item->version + 1, 'updated_at' => Clock::db()]);
+            PanelDb::table('panel_work_items')->where('id', $item->id)->update(['source_state' => $state, 'last_action' => $action, 'last_actor_id' => $actorId, 'version' => (int) $item->version + 1, 'updated_at' => Clock::db()]);
             self::event($item->id, $action, $actorId, $item->status, $item->status, ['sourceState' => $state]);
 
             return;
@@ -113,14 +113,14 @@ final class WorkItems
     /** @param array<string,mixed> $patch */
     private static function transition(stdClass $item, array $patch, string $action, ?string $actorId): void
     {
-        DB::table('panel_work_items')->where('id', $item->id)->update($patch + ['last_action' => $action, 'last_actor_id' => $actorId, 'version' => (int) $item->version + 1, 'updated_at' => Clock::db()]);
+        PanelDb::table('panel_work_items')->where('id', $item->id)->update($patch + ['last_action' => $action, 'last_actor_id' => $actorId, 'version' => (int) $item->version + 1, 'updated_at' => Clock::db()]);
         self::event($item->id, $action, $actorId, $item->status, (string) ($patch['status'] ?? $item->status), null);
     }
 
     /** @param array<string,mixed>|null $details */
     private static function event(string $id, string $action, ?string $actorId, ?string $from, ?string $to, ?array $details): void
     {
-        DB::table('panel_work_item_events')->insert(['work_item_id' => $id, 'action' => $action, 'actor_id' => $actorId, 'from_status' => $from, 'to_status' => $to, 'details' => $details === null ? null : json_encode($details, JSON_UNESCAPED_UNICODE), 'created_at' => Clock::db()]);
+        PanelDb::table('panel_work_item_events')->insert(['work_item_id' => $id, 'action' => $action, 'actor_id' => $actorId, 'from_status' => $from, 'to_status' => $to, 'details' => $details === null ? null : json_encode($details, JSON_UNESCAPED_UNICODE), 'created_at' => Clock::db()]);
     }
 
     /**
@@ -132,8 +132,8 @@ final class WorkItems
      */
     public static function update(Member $m, string $id, array $in): array
     {
-        return Tx::run(static function () use ($m, $id, $in): array {
-            $item = DB::table('panel_work_items')->where('id', $id)->lockForUpdate()->first();
+        return PanelDb::tx(static function () use ($m, $id, $in): array {
+            $item = PanelDb::table('panel_work_items')->where('id', $id)->lockForUpdate()->first();
             if ($item === null) {
                 throw new HttpError(404, 'İş bulunamadı.');
             }
@@ -148,7 +148,7 @@ final class WorkItems
             }
             $patch = [];
             if (array_key_exists('assigneeId', $in)) {
-                if ($in['assigneeId'] !== null && ! DB::table('panel_members')->where('account_id', $in['assigneeId'])->where('status', 'active')->exists()) {
+                if ($in['assigneeId'] !== null && ! PanelDb::table('panel_members')->where('account_id', $in['assigneeId'])->where('status', 'active')->exists()) {
                     throw new HttpError(422, 'Atanan kişi etkin bir panel üyesi değil.');
                 }
                 $patch['assignee_id'] = $in['assigneeId'];
@@ -167,15 +167,15 @@ final class WorkItems
             $before = self::view($item);
             self::transition($item, $patch, 'updated', $m->accountId);
 
-            return ['before' => $before, 'after' => self::view(DB::table('panel_work_items')->where('id', $id)->first())];
+            return ['before' => $before, 'after' => self::view(PanelDb::table('panel_work_items')->where('id', $id)->first())];
         });
     }
 
     /** @return array<string,mixed> */
     public static function claim(Member $m, string $id, int $version, bool $release): array
     {
-        return Tx::run(static function () use ($m, $id, $version, $release): array {
-            $item = DB::table('panel_work_items')->where('id', $id)->lockForUpdate()->first();
+        return PanelDb::tx(static function () use ($m, $id, $version, $release): array {
+            $item = PanelDb::table('panel_work_items')->where('id', $id)->lockForUpdate()->first();
             if ($item === null) {
                 throw new HttpError(404, 'İş bulunamadı.');
             }
@@ -198,7 +198,7 @@ final class WorkItems
                 self::transition($item, ['assignee_id' => $m->accountId, 'status' => 'in_progress'], 'claimed', $m->accountId);
             }
 
-            return self::view(DB::table('panel_work_items')->where('id', $id)->first());
+            return self::view(PanelDb::table('panel_work_items')->where('id', $id)->first());
         });
     }
 
@@ -243,7 +243,7 @@ final class WorkItems
     public static function summary(string $accountId): array
     {
         $now = Clock::db();
-        $byQueue = DB::table('panel_work_items')->whereIn('status', self::ACTIVE)
+        $byQueue = PanelDb::table('panel_work_items')->whereIn('status', self::ACTIVE)
             ->selectRaw('queue, count(*) as total, sum(case when assignee_id is null then 1 else 0 end) as unassigned, sum(case when due_at is not null and due_at < ? then 1 else 0 end) as overdue', [$now])
             ->groupBy('queue')->get()->keyBy('queue');
         $queues = [];
@@ -254,7 +254,7 @@ final class WorkItems
 
         return [
             'queues' => $queues,
-            'mine' => DB::table('panel_work_items')->whereIn('status', self::ACTIVE)->where('assignee_id', $accountId)->count(),
+            'mine' => PanelDb::table('panel_work_items')->whereIn('status', self::ACTIVE)->where('assignee_id', $accountId)->count(),
         ];
     }
 }

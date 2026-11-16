@@ -4,10 +4,9 @@ namespace App\Panel\Settings;
 
 use App\Exceptions\HttpError;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use App\Panel\WorkItems\Queues;
-use App\Support\Tx;
 use Illuminate\Database\QueryException;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use stdClass;
 
@@ -34,7 +33,7 @@ final class Settings
         if (self::$cache === null) {
             self::$cache = [];
             try {
-                foreach (DB::table('panel_settings')->get(['key', 'value']) as $row) {
+                foreach (PanelDb::table('panel_settings')->get(['key', 'value']) as $row) {
                     self::$cache[$row->key] = json_decode((string) $row->value, true);
                 }
             } catch (QueryException) {
@@ -53,7 +52,7 @@ final class Settings
     /** @return list<array<string,mixed>> */
     public static function all(): array
     {
-        $rows = DB::table('panel_settings')->get()->keyBy('key');
+        $rows = PanelDb::table('panel_settings')->get()->keyBy('key');
         $out = [];
         foreach ((array) config('panel.defaults') as $key => $default) {
             /** @var stdClass|null $row */
@@ -74,7 +73,7 @@ final class Settings
 
     public static function version(string $key): int
     {
-        return (int) (DB::table('panel_settings')->where('key', $key)->value('version') ?? 0);
+        return (int) (PanelDb::table('panel_settings')->where('key', $key)->value('version') ?? 0);
     }
 
     /** @return array{before:mixed,after:mixed} */
@@ -85,8 +84,8 @@ final class Settings
         }
         self::validate($key, $value);
 
-        return Tx::run(static function () use ($key, $value, $version, $actorId): array {
-            $row = DB::table('panel_settings')->where('key', $key)->lockForUpdate()->first();
+        return PanelDb::tx(static function () use ($key, $value, $version, $actorId): array {
+            $row = PanelDb::table('panel_settings')->where('key', $key)->lockForUpdate()->first();
             $current = $row === null ? 0 : (int) $row->version;
             if ($current !== $version) {
                 throw new HttpError(409, 'Ayar değişti. Yenileyip tekrar deneyin.');
@@ -94,9 +93,9 @@ final class Settings
             $before = $row === null ? config('panel.defaults.'.$key) : json_decode((string) $row->value, true);
             $json = json_encode($value, JSON_UNESCAPED_UNICODE);
             if ($row === null) {
-                DB::table('panel_settings')->insert(['key' => $key, 'value' => $json, 'description' => self::DESCRIPTIONS[$key] ?? '', 'version' => 1, 'updated_by' => $actorId, 'updated_at' => Clock::db()]);
+                PanelDb::table('panel_settings')->insert(['key' => $key, 'value' => $json, 'description' => self::DESCRIPTIONS[$key] ?? '', 'version' => 1, 'updated_by' => $actorId, 'updated_at' => Clock::db()]);
             } else {
-                DB::table('panel_settings')->where('key', $key)->update(['value' => $json, 'version' => $current + 1, 'updated_by' => $actorId, 'updated_at' => Clock::db()]);
+                PanelDb::table('panel_settings')->where('key', $key)->update(['value' => $json, 'version' => $current + 1, 'updated_by' => $actorId, 'updated_at' => Clock::db()]);
             }
             self::forget();
 

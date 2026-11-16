@@ -5,8 +5,8 @@ namespace App\Console\Commands;
 use App\Panel\Audit\Audit;
 use App\Panel\Auth\Sessions;
 use App\Panel\Members\MemberAdmin;
+use App\Panel\Support\PanelDb;
 use App\Panel\Support\Secret;
-use App\Support\Tx;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -44,7 +44,7 @@ final class MemberSecurity extends Command
         }
         $id = (string) $member->account_id;
         $version = (int) $member->version;
-        Tx::run(function () use ($action, $id, $version, $reason): void {
+        PanelDb::tx(function () use ($action, $id, $version, $reason): void {
             match ($action) {
                 'suspend' => MemberAdmin::setStatus($id, 'suspended', $reason, $version),
                 'reactivate' => MemberAdmin::setStatus($id, 'active', null, $version),

@@ -3,9 +3,9 @@
 namespace App\Console\Commands;
 
 use App\Panel\Audit\Audit;
+use App\Panel\Support\PanelDb;
 use App\Panel\WorkItems\Queues;
 use App\Panel\WorkItems\WorkItems;
-use App\Support\Tx;
 use Illuminate\Console\Command;
 
 /** Ana API kuyruklarindaki acik kayitlardan panel isi acar/kapatir. Kaynak tabloya yazmaz. */
@@ -27,7 +27,7 @@ final class WorkItemsSync extends Command
         $apply = (bool) $this->option('apply');
         $rows = [];
         foreach ($queues as $queue) {
-            $rows[] = array_values($apply ? Tx::run(fn () => WorkItems::sync($queue, true)) : WorkItems::sync($queue, false));
+            $rows[] = array_values($apply ? PanelDb::tx(fn () => WorkItems::sync($queue, true)) : WorkItems::sync($queue, false));
         }
         $this->table(['Kuyruk', 'Kaynakta açık', 'Açılacak', 'Yeniden açılacak', 'Kapanacak', 'Durumu değişen'], $rows);
         if ($apply) {

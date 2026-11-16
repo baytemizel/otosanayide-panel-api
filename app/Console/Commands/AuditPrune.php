@@ -5,8 +5,8 @@ namespace App\Console\Commands;
 use App\Panel\Audit\Audit;
 use App\Panel\Settings\Settings;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 /**
  * Denetim kaydi saklama. Saklama suresi tanimsizsa (varsayilan) hicbir sey silmez; sure en az 365 gundur.
@@ -34,7 +34,7 @@ final class AuditPrune extends Command
             return self::INVALID;
         }
         $cutoff = Clock::db(Clock::now()->subDays($days));
-        $count = DB::table('panel_audit_logs')->where('occurred_at', '<', $cutoff)->count();
+        $count = PanelDb::table('panel_audit_logs')->where('occurred_at', '<', $cutoff)->count();
         $this->line("{$days} günden eski kayıt: {$count} (sınır {$cutoff} UTC)");
         if (! $this->option('apply')) {
             $this->warn('Kuru çalışma: silinmedi. Silmek için --apply --confirm-count='.$count);
@@ -48,7 +48,7 @@ final class AuditPrune extends Command
         }
         $deleted = 0;
         do {
-            $batch = DB::table('panel_audit_logs')->where('occurred_at', '<', $cutoff)->orderBy('id')->limit(5000)->delete();
+            $batch = PanelDb::table('panel_audit_logs')->where('occurred_at', '<', $cutoff)->orderBy('id')->limit(5000)->delete();
             $deleted += $batch;
         } while ($batch > 0);
         Audit::console('audit.pruned', null, null, null, ['days' => $days, 'deleted' => $deleted, 'cutoff' => $cutoff]);

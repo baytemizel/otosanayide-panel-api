@@ -5,8 +5,8 @@ namespace App\Panel\Audit;
 use App\Panel\Auth\Member;
 use App\Panel\Security\Ip;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -36,7 +36,7 @@ final class Audit
             'user_agent' => $request === null ? null : mb_substr((string) $request->userAgent(), 0, 255),
         ];
         try {
-            DB::table('panel_audit_logs')->insert($row);
+            PanelDb::table('panel_audit_logs')->insert($row);
         } catch (Throwable $e) {
             Log::error('Panel audit write failed', ['action' => $action, 'class' => $e::class]);
         }
@@ -45,7 +45,7 @@ final class Audit
     /** @param array<string,mixed>|null $details */
     public static function console(string $action, ?string $subjectType, ?string $subjectId, ?string $reason = null, ?array $details = null): void
     {
-        DB::table('panel_audit_logs')->insert([
+        PanelDb::table('panel_audit_logs')->insert([
             'occurred_at' => Clock::db(),
             'actor_type' => 'console',
             'actor_id' => null,

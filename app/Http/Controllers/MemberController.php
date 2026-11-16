@@ -10,7 +10,7 @@ use App\Panel\Http\Paging;
 use App\Panel\Http\Respond;
 use App\Panel\Members\MemberAdmin;
 use App\Panel\Support\Clock;
-use App\Support\Tx;
+use App\Panel\Support\PanelDb;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,7 +21,7 @@ final class MemberController extends PanelController
     public function index(Request $request): JsonResponse
     {
         $f = $this->query($request, ['status' => ['nullable', 'in:active,suspended'], 'role' => ['nullable', 'string', 'max:64'], 'q' => ['nullable', 'string', 'max:120']]);
-        $q = DB::table('panel_members as m')->join('auth_accounts as a', 'a.id', '=', 'm.account_id')->select(['m.*', 'a.email'])->orderBy('m.display_name');
+        $q = PanelDb::table('panel_members as m')->select('m.*')->orderBy('m.display_name');
         if (isset($f['status'])) {
             $q->where('m.status', $f['status']);
         }
@@ -29,12 +29,15 @@ final class MemberController extends PanelController
             $q->whereExists(fn ($w) => $w->from('panel_member_roles as mr')->join('panel_roles as r', 'r.id', '=', 'mr.role_id')->whereColumn('mr.account_id', 'm.account_id')->where('r.key', $f['role']));
         }
         if (isset($f['q'])) {
-            $q->where(fn ($w) => $w->where('m.display_name', 'like', '%'.addcslashes($f['q'], '%_\\').'%')->orWhere('a.email', 'like', addcslashes(mb_strtolower($f['q']), '%_\\').'%'));
+            // E-posta ana veritabaninda: yalniz panel uyeleri arasinda aranir, eslesen kimlikler panel sorgusuna verilir.
+            $byEmail = DB::table('auth_accounts')->whereIn('id', MemberAdmin::accountIds())
+                ->where('email', 'like', addcslashes(mb_strtolower($f['q']), '%_\\').'%')->pluck('id')->all();
+            $q->where(fn ($w) => $w->where('m.display_name', 'like', '%'.addcslashes($f['q'], '%_\\').'%')->orWhereIn('m.account_id', $byEmail));
         }
         $paging = Paging::from($request);
         [$rows, $total] = $paging->run($q);
 
-        return Respond::page(array_map(MemberAdmin::view(...), $rows), $paging, $total);
+        return Respond::page(array_map(MemberAdmin::view(...), MemberAdmin::withEmails($rows)), $paging, $total);
     }
 
     public function show(Request $request, string $accountId): JsonResponse
@@ -57,7 +60,7 @@ final class MemberController extends PanelController
         MemberAdmin::assertIpList($in['ipAllowlist'] ?? []);
         $account = MemberAdmin::eligibleAccount($in['email']);
         MemberAdmin::assertRoles($in['roles']);
-        if (DB::table('panel_members')->where('account_id', $account->id)->exists()) {
+        if (PanelDb::table('panel_members')->where('account_id', $account->id)->exists()) {
             throw new HttpError(409, 'Bu hesap zaten panel üyesi.');
         }
         $privileged = array_values(array_filter($in['roles'], static fn (string $r): bool => Permissions::isPrivilegedRole($r)));
@@ -67,7 +70,7 @@ final class MemberController extends PanelController
 
             return Respond::pendingApproval($approval);
         }
-        Tx::run(fn () => MemberAdmin::create($account->id, $in['displayName'], $in['roles'], $in['ipAllowlist'] ?? [], $actor->accountId, $actor->accountId));
+        PanelDb::tx(fn () => MemberAdmin::create($account->id, $in['displayName'], $in['roles'], $in['ipAllowlist'] ?? [], $actor->accountId, $actor->accountId));
         $this->audit($request, 'member.created', 'panel_member', $account->id, $in['reason'], ['roles' => $in['roles']]);
 
         return Respond::created(MemberAdmin::view((object) MemberAdmin::row($account->id)));
@@ -81,7 +84,7 @@ final class MemberController extends PanelController
             'ipAllowlist' => ['sometimes', 'array', 'max:20'], 'ipAllowlist.*' => ['string', 'max:64'],
         ]);
         MemberAdmin::assertIpList($in['ipAllowlist'] ?? []);
-        $before = Tx::run(function () use ($accountId, $in): array {
+        $before = PanelDb::tx(function () use ($accountId, $in): array {
             $m = MemberAdmin::row($accountId, true) ?? $this->notFound('Panel üyesi');
             if ((int) $m->version !== $in['version']) {
                 throw new HttpError(409, 'Üye kaydı değişti. Yenileyip tekrar deneyin.');
@@ -93,7 +96,7 @@ final class MemberController extends PanelController
             if (array_key_exists('ipAllowlist', $in)) {
                 $patch['ip_allowlist'] = $in['ipAllowlist'] === [] ? null : json_encode(array_values($in['ipAllowlist']));
             }
-            DB::table('panel_members')->where('account_id', $accountId)->update($patch);
+            PanelDb::table('panel_members')->where('account_id', $accountId)->update($patch);
 
             return MemberAdmin::view($m);
         });
@@ -117,7 +120,7 @@ final class MemberController extends PanelController
 
             return Respond::pendingApproval($approval);
         }
-        Tx::run(fn () => MemberAdmin::setRoles($accountId, $in['roles'], $in['version'], $actor->accountId));
+        PanelDb::tx(fn () => MemberAdmin::setRoles($accountId, $in['roles'], $in['version'], $actor->accountId));
         $this->audit($request, 'member.roles_changed', 'panel_member', $accountId, $in['reason'], ['before' => $before, 'after' => $in['roles']]);
 
         return Respond::data(MemberAdmin::view((object) MemberAdmin::row($accountId)));
@@ -140,7 +143,7 @@ final class MemberController extends PanelController
         if ($accountId === $actor->accountId) {
             throw new HttpError(422, 'Kendi panel üyeliğini değiştiremezsin.');
         }
-        Tx::run(fn () => MemberAdmin::setStatus($accountId, $status, $in['reason'], $in['version']));
+        PanelDb::tx(fn () => MemberAdmin::setStatus($accountId, $status, $in['reason'], $in['version']));
         $this->audit($request, $status === 'suspended' ? 'member.suspended' : 'member.reactivated', 'panel_member', $accountId, $in['reason']);
 
         return Respond::data(MemberAdmin::view((object) MemberAdmin::row($accountId)));
@@ -153,7 +156,7 @@ final class MemberController extends PanelController
         if ($accountId === $actor->accountId) {
             throw new HttpError(422, 'Kendi MFA kaydını sıfırlayamazsın; başka bir yöneticiden iste.');
         }
-        Tx::run(fn () => MemberAdmin::resetMfa($accountId, $in['version']));
+        PanelDb::tx(fn () => MemberAdmin::resetMfa($accountId, $in['version']));
         $this->audit($request, 'member.mfa_reset', 'panel_member', $accountId, $in['reason']);
 
         return Respond::data(MemberAdmin::view((object) MemberAdmin::row($accountId)));

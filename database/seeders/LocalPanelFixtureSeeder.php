@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Panel\Members\MemberAdmin;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use App\Support\Tx;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\App;
@@ -14,7 +15,8 @@ use RuntimeException;
 /**
  * Yalniz local/testing: her sistem rolu icin sentetik hesap (`<rol>@panel.test`) ve panel uyeligi.
  * Sifre ortamdan gelir (LOCAL_PANEL_PASSWORD, 12+); depoda sabit sifre yoktur. Uretimde calismaz.
- * On kosul: yerel veritabaninda ana API migration'lari ve DatabaseSeeder uygulanmis olmali.
+ * On kosul: yerel ana veritabaninda ana API migration'lari, yerel panel veritabaninda panel migration'lari ve
+ * DatabaseSeeder uygulanmis olmali.
  */
 final class LocalPanelFixtureSeeder extends Seeder
 {
@@ -29,16 +31,24 @@ final class LocalPanelFixtureSeeder extends Seeder
         }
         $hash = Hash::make($password);
         $created = 0;
-        Tx::run(function () use ($hash, &$created): void {
-            foreach (array_keys((array) config('panel_permissions.roles')) as $role) {
-                $email = str_replace('_', '-', $role).'@panel.test';
-                $id = 'panelfixture'.substr(hash('sha256', $email), 0, 16);
-                if (! DB::table('auth_accounts')->where('id', $id)->exists()) {
+        $accounts = [];
+        foreach (array_keys((array) config('panel_permissions.roles')) as $role) {
+            $email = str_replace('_', '-', $role).'@panel.test';
+            $accounts[$role] = ['id' => 'panelfixture'.substr(hash('sha256', $email), 0, 16), 'email' => $email];
+        }
+        // Once ana veritabani (sentetik hesaplar), sonra panel veritabani (uyelik): iki ayri transaction.
+        Tx::run(function () use ($accounts, $hash): void {
+            foreach ($accounts as $a) {
+                if (! DB::table('auth_accounts')->where('id', $a['id'])->exists()) {
                     $now = Clock::db();
-                    DB::table('auth_accounts')->insert(['id' => $id, 'email' => $email, 'email_verified_at' => $now, 'password_hash' => $hash, 'password_changed_at' => $now, 'tokens_valid_after' => $now]);
+                    DB::table('auth_accounts')->insert(['id' => $a['id'], 'email' => $a['email'], 'email_verified_at' => $now, 'password_hash' => $hash, 'password_changed_at' => $now, 'tokens_valid_after' => $now]);
                 }
-                if (! DB::table('panel_members')->where('account_id', $id)->exists()) {
-                    MemberAdmin::create($id, 'Sentetik '.$role, [$role], [], 'console', 'console');
+            }
+        });
+        PanelDb::tx(function () use ($accounts, &$created): void {
+            foreach ($accounts as $role => $a) {
+                if (! PanelDb::table('panel_members')->where('account_id', $a['id'])->exists()) {
+                    MemberAdmin::create($a['id'], 'Sentetik '.$role, [$role], [], 'console', 'console');
                     $created++;
                 }
             }

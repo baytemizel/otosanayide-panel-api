@@ -4,8 +4,8 @@ namespace App\Console\Commands;
 
 use App\Panel\Stats\Stats;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 /** Gunluk sayim anlik goruntusu (Europe/Istanbul gunu). Ayni gun yeniden calisirsa deger guncellenir. */
 final class StatsSnapshot extends Command
@@ -30,7 +30,7 @@ final class StatsSnapshot extends Command
             return self::SUCCESS;
         }
         $now = Clock::db();
-        DB::table('panel_stat_snapshots')->upsert(
+        PanelDb::table('panel_stat_snapshots')->upsert(
             array_map(static fn (array $r): array => ['snapshot_date' => $date, 'metric' => $r['metric'], 'dimension' => $r['dimension'], 'value' => $r['value'], 'created_at' => $now], $rows),
             ['snapshot_date', 'metric', 'dimension'],
             ['value', 'created_at'],

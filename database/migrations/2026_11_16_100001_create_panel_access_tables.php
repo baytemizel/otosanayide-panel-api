@@ -5,9 +5,9 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Panel kimligi ve yetkisi. Kimlik ana API'nin `auth_accounts` satiridir (ayni kisi, ayni sifre);
- * panel uyeligi, rolleri, ayri TOTP faktoru ve oturumlari burada tutulur.
- * On kosul: ana API migration'lari bu veritabaninda uygulanmis olmali (auth_accounts FK).
+ * Panel kimligi ve yetkisi. Kimlik ana veritabanindaki `auth_accounts` satiridir (ayni kisi, ayni sifre);
+ * panel uyeligi, rolleri, ayri TOTP faktoru ve oturumlari panel veritabaninda tutulur. Iki veritabani arasinda
+ * yabanci anahtar yoktur: hesap varligi uyelik olusturulurken ve her giriste/istekte ana veritabanindan denetlenir.
  */
 return new class extends Migration
 {
@@ -52,7 +52,6 @@ return new class extends Migration
             $t->ms('created_at')->useCurrent();
             $t->ms('updated_at')->useCurrent()->useCurrentOnUpdate();
             $t->index(['status', 'account_id']);
-            $t->foreign('account_id')->references('id')->on('auth_accounts')->cascadeOnDelete();
         });
 
         Schema::create('panel_member_roles', function (Blueprint $t) {

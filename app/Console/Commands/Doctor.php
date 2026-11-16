@@ -2,14 +2,17 @@
 
 namespace App\Console\Commands;
 
+use App\Panel\Members\MemberAdmin;
+use App\Panel\Support\PanelDb;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 /**
- * Kurulum denetimi. Varsayilan: yalniz yapilandirma (baglanti yok). --db: salt okunur sorgularla tablo varligi
- * (ana API sema on kosulu ve panel migration'lari). Hicbir sey yazmaz.
+ * Kurulum denetimi. Varsayilan: yalniz yapilandirma (baglanti yok). --db: iki veritabanina salt okunur baglanip
+ * tablo varligi (ana veritabani: ana API sema on kosulu; panel veritabani: panel migration'lari) ve ana
+ * veritabaninda hesabi bulunmayan panel uyeleri. Hicbir sey yazmaz.
  */
 final class Doctor extends Command
 {
@@ -27,9 +30,10 @@ final class Doctor extends Command
             ['APP_KEY', config('app.key') ? 'ok' : 'EKSİK'],
             ['APP_ENV', (string) config('app.env')],
             ['APP_DEBUG', config('app.debug') ? (app()->environment('production') ? 'UYARI: üretimde açık' : 'açık') : 'kapalı'],
-            ['DB_CONNECTION', (string) config('database.default')],
-            ['DB_HOST/DB_DATABASE', config('database.connections.mysql.host') && config('database.connections.mysql.database') ? 'tanımlı' : 'boş'],
-            ['Migration defteri', (string) config('database.migrations.table')],
+            ['Ana veritabanı (DB_*)', self::describe((string) config('database.default'))],
+            ['Panel veritabanı (PANEL_DB_*)', self::describe(PanelDb::CONNECTION)],
+            ['Veritabanları ayrı', self::separate() ? 'evet' : 'HAYIR: panel ve ana veritabanı aynı'],
+            ['Migration defteri', PanelDb::CONNECTION.' / '.config('database.migrations.table')],
             ['PANEL_WEB_ORIGIN', config('panel.web_origin') ?: 'boş (tarayıcı CORS kapalı)'],
             ['PANEL_IP_ALLOWLIST', config('panel.ip_allowlist') ?: 'boş (genel kısıt yok)'],
             ['Yenileme çerezi secure', config('panel.refresh_cookie.secure') ? 'evet' : 'HAYIR (yalnız yerel)'],
@@ -47,30 +51,63 @@ final class Doctor extends Command
         if (! $this->option('db')) {
             $this->line('Veritabanı denetimi için --db (salt okunur).');
 
-            return config('app.key') ? self::SUCCESS : self::FAILURE;
+            return config('app.key') && self::configured((string) config('database.default')) && self::configured(PanelDb::CONNECTION) ? self::SUCCESS : self::FAILURE;
         }
-        try {
-            DB::connection()->getPdo();
-        } catch (Throwable $e) {
-            $this->error('Veritabanına bağlanılamadı: '.$e::class);
+        foreach (['Ana' => DB::connection(), 'Panel' => PanelDb::connection()] as $label => $connection) {
+            try {
+                $connection->getPdo();
+            } catch (Throwable $e) {
+                $this->error($label.' veritabanına bağlanılamadı: '.$e::class);
 
-            return self::FAILURE;
+                return self::FAILURE;
+            }
         }
         $missingMain = array_values(array_filter(self::MAIN_TABLES, static fn (string $t): bool => ! Schema::hasTable($t)));
-        $missingPanel = array_values(array_filter(self::PANEL_TABLES, static fn (string $t): bool => ! Schema::hasTable($t)));
+        $missingPanel = array_values(array_filter(self::PANEL_TABLES, static fn (string $t): bool => ! Schema::connection(PanelDb::CONNECTION)->hasTable($t)));
         $this->table(['Şema', 'Eksik tablo'], [
-            ['Ana API (ön koşul)', $missingMain === [] ? 'yok' : implode(', ', $missingMain)],
-            ['Panel', $missingPanel === [] ? 'yok' : implode(', ', $missingPanel)],
+            ['Ana veritabanı (ön koşul)', $missingMain === [] ? 'yok' : implode(', ', $missingMain)],
+            ['Panel veritabanı', $missingPanel === [] ? 'yok' : implode(', ', $missingPanel)],
         ]);
+        $orphans = [];
         if ($missingPanel === []) {
+            // Veritabanlari arasi yabanci anahtar yok: hesabi ana veritabaninda olmayan uye giris yapamaz, burada raporlanir.
+            $ids = MemberAdmin::accountIds();
+            $known = $missingMain === [] ? DB::table('auth_accounts')->whereIn('id', $ids)->pluck('id')->all() : $ids;
+            $orphans = array_values(array_diff($ids, array_map('strval', $known)));
             $this->table(['Panel verisi', 'Sayı'], [
-                ['Roller', DB::table('panel_roles')->count()],
-                ['Yetkiler', DB::table('panel_permissions')->count()],
-                ['Etkin üyeler', DB::table('panel_members')->where('status', 'active')->count()],
-                ['Kategoriler', DB::table('panel_taxonomy_categories')->count()],
+                ['Roller', PanelDb::table('panel_roles')->count()],
+                ['Yetkiler', PanelDb::table('panel_permissions')->count()],
+                ['Etkin üyeler', PanelDb::table('panel_members')->where('status', 'active')->count()],
+                ['Hesabı bulunmayan üyeler', count($orphans)],
+                ['Kategoriler', PanelDb::table('panel_taxonomy_categories')->count()],
             ]);
+            if ($orphans !== []) {
+                $this->warn('Ana veritabanında hesabı olmayan panel üyeleri: '.implode(', ', $orphans));
+            }
         }
 
-        return $missingMain === [] && $missingPanel === [] ? self::SUCCESS : self::FAILURE;
+        return $missingMain === [] && $missingPanel === [] && $orphans === [] ? self::SUCCESS : self::FAILURE;
+    }
+
+    private static function describe(string $connection): string
+    {
+        return self::configured($connection)
+            ? 'tanımlı ('.$connection.' · '.config('database.connections.'.$connection.'.database').')'
+            : 'EKSİK ('.$connection.': sunucu veya veritabanı adı boş)';
+    }
+
+    private static function configured(string $connection): bool
+    {
+        $c = (array) config('database.connections.'.$connection);
+
+        return ($c['host'] ?? '') !== '' && ($c['database'] ?? '') !== '';
+    }
+
+    private static function separate(): bool
+    {
+        $main = (array) config('database.connections.'.config('database.default'));
+        $panel = (array) config('database.connections.'.PanelDb::CONNECTION);
+
+        return [$main['host'] ?? null, (string) ($main['port'] ?? ''), $main['database'] ?? null] !== [$panel['host'] ?? null, (string) ($panel['port'] ?? ''), $panel['database'] ?? null];
     }
 }

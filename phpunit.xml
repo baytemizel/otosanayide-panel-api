@@ -21,10 +21,13 @@
         <env name="MAIL_MAILER" value="array"/>
         <env name="PANEL_WEB_ORIGIN" value="https://panel.otosanayide.test"/>
         <env name="PANEL_IP_ALLOWLIST" value=""/>
-        <!-- Baglantisiz paket: bu port hicbir yere ulasmaz; hicbir test veritabanina baglanmaz. -->
+        <!-- Baglantisiz paket: bu port hicbir yere ulasmaz; hicbir test ana veya panel veritabanina baglanmaz. -->
         <env name="DB_CONNECTION" value="mysql"/>
         <env name="DB_HOST" value="127.0.0.1"/>
         <env name="DB_PORT" value="1"/>
         <env name="DB_DATABASE" value="offline_no_database"/>
+        <env name="PANEL_DB_HOST" value="127.0.0.1"/>
+        <env name="PANEL_DB_PORT" value="1"/>
+        <env name="PANEL_DB_DATABASE" value="offline_no_panel_database"/>
     </php>
 </phpunit>

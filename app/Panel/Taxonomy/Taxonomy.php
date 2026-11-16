@@ -3,7 +3,7 @@
 namespace App\Panel\Taxonomy;
 
 use App\Panel\Support\Clock;
-use Illuminate\Support\Facades\DB;
+use App\Panel\Support\PanelDb;
 use RuntimeException;
 
 /**
@@ -39,7 +39,7 @@ final class Taxonomy
     {
         $counts = ['categories' => 0, 'services' => 0, 'aliases' => 0, 'cities' => 0, 'districts' => 0];
         $now = Clock::db();
-        $existingCategories = DB::table('panel_taxonomy_categories')->pluck('id')->flip();
+        $existingCategories = PanelDb::table('panel_taxonomy_categories')->pluck('id')->flip();
         foreach (array_values($src['catalogue']['categories']) as $i => $c) {
             if ($existingCategories->has($c['id'])) {
                 continue;
@@ -47,18 +47,18 @@ final class Taxonomy
             $counts['categories']++;
             $counts['services'] += count($c['services'] ?? []);
             if ($apply) {
-                DB::table('panel_taxonomy_categories')->insert(['id' => $c['id'], 'name' => $c['name'], 'position' => $i, 'created_at' => $now, 'updated_at' => $now]);
+                PanelDb::table('panel_taxonomy_categories')->insert(['id' => $c['id'], 'name' => $c['name'], 'position' => $i, 'created_at' => $now, 'updated_at' => $now]);
                 $rows = [];
                 foreach (array_values($c['services'] ?? []) as $p => $s) {
                     $rows[] = ['category_id' => $c['id'], 'name' => $s, 'position' => $p];
                 }
                 if ($rows !== []) {
-                    DB::table('panel_taxonomy_services')->insert($rows);
+                    PanelDb::table('panel_taxonomy_services')->insert($rows);
                 }
             }
         }
         foreach (['alias' => 'aliases', 'english' => 'englishExtra'] as $kind => $key) {
-            $existing = DB::table('panel_taxonomy_aliases')->where('kind', $kind)->pluck('term')->flip();
+            $existing = PanelDb::table('panel_taxonomy_aliases')->where('kind', $kind)->pluck('term')->flip();
             $rows = [];
             foreach ((array) ($src['catalogue'][$key] ?? []) as $term => $target) {
                 if (! $existing->has((string) $term)) {
@@ -68,11 +68,11 @@ final class Taxonomy
             $counts['aliases'] += count($rows);
             if ($apply) {
                 foreach (array_chunk($rows, 500) as $chunk) {
-                    DB::table('panel_taxonomy_aliases')->insert($chunk);
+                    PanelDb::table('panel_taxonomy_aliases')->insert($chunk);
                 }
             }
         }
-        $existingCities = DB::table('panel_taxonomy_cities')->pluck('name')->flip();
+        $existingCities = PanelDb::table('panel_taxonomy_cities')->pluck('name')->flip();
         $coverage = array_flip($src['coverage']['cities']);
         $metro = array_flip($src['coverage']['metropolitanCities'] ?? []);
         $areas = (array) ($src['coverage']['areas'] ?? []);
@@ -84,13 +84,13 @@ final class Taxonomy
             $area = $areas[$name] ?? null;
             $counts['districts'] += count($area['districts'] ?? []);
             if ($apply) {
-                DB::table('panel_taxonomy_cities')->insert(['name' => $name, 'plate_order' => $i + 1, 'in_coverage' => isset($coverage[$name]), 'metropolitan' => isset($metro[$name]), 'latitude' => $area['center']['latitude'] ?? null, 'longitude' => $area['center']['longitude'] ?? null, 'updated_at' => $now]);
+                PanelDb::table('panel_taxonomy_cities')->insert(['name' => $name, 'plate_order' => $i + 1, 'in_coverage' => isset($coverage[$name]), 'metropolitan' => isset($metro[$name]), 'latitude' => $area['center']['latitude'] ?? null, 'longitude' => $area['center']['longitude'] ?? null, 'updated_at' => $now]);
                 $rows = [];
                 foreach (array_values($area['districts'] ?? []) as $p => $d) {
                     $rows[] = ['city' => $name, 'name' => $d['name'], 'position' => $p, 'latitude' => $d['latitude'], 'longitude' => $d['longitude']];
                 }
                 if ($rows !== []) {
-                    DB::table('panel_taxonomy_districts')->insert($rows);
+                    PanelDb::table('panel_taxonomy_districts')->insert($rows);
                 }
             }
         }
@@ -106,14 +106,14 @@ final class Taxonomy
      */
     public static function export(array $coverageSource): array
     {
-        $services = DB::table('panel_taxonomy_services')->orderBy('category_id')->orderBy('position')->get()->groupBy('category_id');
+        $services = PanelDb::table('panel_taxonomy_services')->orderBy('category_id')->orderBy('position')->get()->groupBy('category_id');
         $categories = [];
-        foreach (DB::table('panel_taxonomy_categories')->where('active', true)->orderBy('position')->orderBy('id')->get() as $c) {
+        foreach (PanelDb::table('panel_taxonomy_categories')->where('active', true)->orderBy('position')->orderBy('id')->get() as $c) {
             $categories[] = ['id' => $c->id, 'name' => $c->name, 'services' => ($services->get($c->id) ?? collect())->pluck('name')->values()->all()];
         }
         $aliases = [];
         $english = [];
-        foreach (DB::table('panel_taxonomy_aliases')->orderBy('kind')->orderBy('term')->get() as $a) {
+        foreach (PanelDb::table('panel_taxonomy_aliases')->orderBy('kind')->orderBy('term')->get() as $a) {
             if ($a->kind === 'alias') {
                 $aliases[$a->term] = $a->target;
             } else {
@@ -121,13 +121,13 @@ final class Taxonomy
             }
         }
         $collator = new \Collator('tr_TR');
-        $cities = DB::table('panel_taxonomy_cities')->where('in_coverage', true)->pluck('name')->all();
+        $cities = PanelDb::table('panel_taxonomy_cities')->where('in_coverage', true)->pluck('name')->all();
         $collator->sort($cities);
-        $metro = DB::table('panel_taxonomy_cities')->where('in_coverage', true)->where('metropolitan', true)->pluck('name')->all();
+        $metro = PanelDb::table('panel_taxonomy_cities')->where('in_coverage', true)->where('metropolitan', true)->pluck('name')->all();
         $collator->sort($metro);
-        $districts = DB::table('panel_taxonomy_districts')->orderBy('city')->orderBy('position')->get()->groupBy('city');
+        $districts = PanelDb::table('panel_taxonomy_districts')->orderBy('city')->orderBy('position')->get()->groupBy('city');
         $areas = [];
-        foreach (DB::table('panel_taxonomy_cities')->whereNotNull('latitude')->orderBy('plate_order')->get() as $city) {
+        foreach (PanelDb::table('panel_taxonomy_cities')->whereNotNull('latitude')->orderBy('plate_order')->get() as $city) {
             $areas[$city->name] = [
                 'center' => ['latitude' => (float) $city->latitude, 'longitude' => (float) $city->longitude],
                 'districts' => ($districts->get($city->name) ?? collect())->map(static fn (\stdClass $d): array => ['name' => $d->name, 'latitude' => (float) $d->latitude, 'longitude' => (float) $d->longitude])->values()->all(),

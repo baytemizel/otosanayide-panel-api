@@ -5,9 +5,8 @@ namespace App\Console\Commands;
 use App\Panel\Audit\Audit;
 use App\Panel\Auth\Permissions;
 use App\Panel\Members\MemberAdmin;
-use App\Support\Tx;
+use App\Panel\Support\PanelDb;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 /**
  * Ilk yoneticiyi (veya acil durumda bir uyeyi) konsoldan panel uyesi yapar. Ikinci kontrolu atlar; bu yuzden
@@ -35,12 +34,12 @@ final class MemberGrant extends Command
         }
         $account = MemberAdmin::eligibleAccount((string) $this->argument('email'));
         MemberAdmin::assertRoles($roles);
-        if (DB::table('panel_members')->where('account_id', $account->id)->exists()) {
+        if (PanelDb::table('panel_members')->where('account_id', $account->id)->exists()) {
             $this->error('Bu hesap zaten panel üyesi. Rol değişikliği panelden yapılır.');
 
             return self::FAILURE;
         }
-        $activeSupers = DB::table('panel_member_roles as mr')->join('panel_roles as r', 'r.id', '=', 'mr.role_id')->join('panel_members as m', 'm.account_id', '=', 'mr.account_id')
+        $activeSupers = PanelDb::table('panel_member_roles as mr')->join('panel_roles as r', 'r.id', '=', 'mr.role_id')->join('panel_members as m', 'm.account_id', '=', 'mr.account_id')
             ->where('r.key', 'super_admin')->where('m.status', 'active')->count();
         $privileged = array_filter($roles, static fn (string $r): bool => Permissions::isPrivilegedRole($r));
         if ($activeSupers > 0 && $privileged !== [] && ! $this->option('force')) {
@@ -55,7 +54,7 @@ final class MemberGrant extends Command
 
             return self::SUCCESS;
         }
-        Tx::run(fn () => MemberAdmin::create($account->id, $name, $roles, [], 'console', 'console'));
+        PanelDb::tx(fn () => MemberAdmin::create($account->id, $name, $roles, [], 'console', 'console'));
         Audit::console('member.created', 'panel_member', $account->id, $reason, ['roles' => $roles, 'force' => (bool) $this->option('force')]);
         $this->info('Panel üyesi oluşturuldu. İlk girişte TOTP kurulumu '.config('panel.mfa.enrollment_hours').' saat içinde yapılmalı.');
 

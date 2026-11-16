@@ -9,9 +9,9 @@ use App\Panel\Members\MemberAdmin;
 use App\Panel\Members\RoleAdmin;
 use App\Panel\Settings\Settings;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use App\Support\Tx;
 use Illuminate\Database\QueryException;
-use Illuminate\Support\Facades\DB;
 use stdClass;
 use Throwable;
 
@@ -19,7 +19,8 @@ use Throwable;
  * Ikinci kontrol (dort goz). Urun plani: "Sahiplik devri, ayricalikli rol verme ve yuksek tutarli iade icin
  * ikinci kontrol kurali yapilandirilabilir." Bu surumde: ayricalikli panel rolu verme (uye olusturma ve rol
  * degisikligi), role hassas yetki ekleme, approvals.* ayarlari ve platform yetkisi degisikligi. Talep eden ve
- * talebin konusu olan kisi karar veremez; onayda islem ayni transaction'da kurallar yeniden uygulanarak yurur.
+ * talebin konusu olan kisi karar veremez; onayda islem ayni (panel) transaction'da kurallar yeniden uygulanarak
+ * yurur. Platform yetkisi ana veritabanina yazar: o yazim panel transaction'inin son adimidir (bkz. PanelDb).
  */
 final class Approvals
 {
@@ -36,15 +37,15 @@ final class Approvals
     {
         $def = self::ACTIONS[$action];
 
-        return Tx::run(static function () use ($m, $action, $def, $subjectId, $payload, $summary, $reason): array {
-            $open = DB::table('panel_approvals')->where('action', $action)->where('subject_id', $subjectId)->where('status', 'pending')
+        return PanelDb::tx(static function () use ($m, $action, $def, $subjectId, $payload, $summary, $reason): array {
+            $open = PanelDb::table('panel_approvals')->where('action', $action)->where('subject_id', $subjectId)->where('status', 'pending')
                 ->where('expires_at', '>', Clock::db())->lockForUpdate()->exists();
             if ($open) {
                 throw new HttpError(409, 'Bu kayıt için bekleyen bir ikinci kontrol talebi var.');
             }
             $id = Clock::uuid();
             $now = Clock::now();
-            DB::table('panel_approvals')->insert([
+            PanelDb::table('panel_approvals')->insert([
                 'id' => $id, 'action' => $action, 'subject_type' => $def['subject'], 'subject_id' => $subjectId,
                 'payload' => json_encode($payload, JSON_UNESCAPED_UNICODE), 'summary' => mb_substr($summary, 0, 500),
                 'requested_by' => $m->accountId, 'request_reason' => $reason,
@@ -52,7 +53,7 @@ final class Approvals
                 'created_at' => Clock::db($now), 'updated_at' => Clock::db($now),
             ]);
 
-            return self::view(DB::table('panel_approvals')->where('id', $id)->first());
+            return self::view(PanelDb::table('panel_approvals')->where('id', $id)->first());
         });
     }
 
@@ -60,7 +61,7 @@ final class Approvals
     public static function decide(Member $m, string $id, int $version, bool $approve, string $reason): array
     {
         try {
-            return Tx::run(static function () use ($m, $id, $version, $approve, $reason): array {
+            return PanelDb::tx(static function () use ($m, $id, $version, $approve, $reason): array {
                 $a = self::lockPending($id, $version);
                 if ($a->requested_by === $m->accountId) {
                     throw new HttpError(403, 'Kendi talebini onaylayamaz veya reddedemezsin.');
@@ -74,17 +75,20 @@ final class Approvals
                 }
                 $m->require(self::ACTIONS[$a->action]['permission']);
                 $now = Clock::db();
+                PanelDb::table('panel_approvals')->where('id', $id)->update(['status' => $approve ? 'approved' : 'rejected', 'decided_by' => $m->accountId, 'decision_reason' => $reason, 'decided_at' => $now, 'version' => $version + 1, 'updated_at' => $now]);
+                $view = self::view(PanelDb::table('panel_approvals')->where('id', $id)->first());
+                // Islem en son yurur: hata verirse karar da geri alinir. Ana veritabanina yazan islem (platform
+                // yetkisi) kendi transaction'inda tamamlanir; ardindan panel transaction'i baska sorgu olmadan kapanir.
                 if ($approve) {
                     self::execute($a, $m);
                 }
-                DB::table('panel_approvals')->where('id', $id)->update(['status' => $approve ? 'approved' : 'rejected', 'decided_by' => $m->accountId, 'decision_reason' => $reason, 'decided_at' => $now, 'version' => $version + 1, 'updated_at' => $now]);
 
-                return self::view(DB::table('panel_approvals')->where('id', $id)->first());
+                return $view;
             });
         } catch (HttpError $e) {
             if ($approve && $e->status === 409 && str_starts_with($e->getMessage(), '[execute]')) {
                 $message = substr($e->getMessage(), 9);
-                DB::table('panel_approvals')->where('id', $id)->where('status', 'pending')->update(['status' => 'failed', 'decided_by' => $m->accountId, 'decision_reason' => $reason, 'decided_at' => Clock::db(), 'failure' => mb_substr($message, 0, 500), 'version' => $version + 1, 'updated_at' => Clock::db()]);
+                PanelDb::table('panel_approvals')->where('id', $id)->where('status', 'pending')->update(['status' => 'failed', 'decided_by' => $m->accountId, 'decision_reason' => $reason, 'decided_at' => Clock::db(), 'failure' => mb_substr($message, 0, 500), 'version' => $version + 1, 'updated_at' => Clock::db()]);
                 throw new HttpError(409, 'Onaylanan işlem uygulanamadı: '.$message);
             }
             throw $e;
@@ -94,20 +98,20 @@ final class Approvals
     /** @return array<string,mixed> */
     public static function cancel(Member $m, string $id, int $version, string $reason): array
     {
-        return Tx::run(static function () use ($m, $id, $version, $reason): array {
+        return PanelDb::tx(static function () use ($m, $id, $version, $reason): array {
             $a = self::lockPending($id, $version);
             if ($a->requested_by !== $m->accountId && ! $m->can('approvals.decide')) {
                 throw new HttpError(403, 'Yalnız talep eden iptal edebilir.');
             }
-            DB::table('panel_approvals')->where('id', $id)->update(['status' => 'cancelled', 'decided_by' => $m->accountId, 'decision_reason' => $reason, 'decided_at' => Clock::db(), 'version' => $version + 1, 'updated_at' => Clock::db()]);
+            PanelDb::table('panel_approvals')->where('id', $id)->update(['status' => 'cancelled', 'decided_by' => $m->accountId, 'decision_reason' => $reason, 'decided_at' => Clock::db(), 'version' => $version + 1, 'updated_at' => Clock::db()]);
 
-            return self::view(DB::table('panel_approvals')->where('id', $id)->first());
+            return self::view(PanelDb::table('panel_approvals')->where('id', $id)->first());
         });
     }
 
     private static function lockPending(string $id, int $version): stdClass
     {
-        $a = DB::table('panel_approvals')->where('id', $id)->lockForUpdate()->first();
+        $a = PanelDb::table('panel_approvals')->where('id', $id)->lockForUpdate()->first();
         if ($a === null) {
             throw new HttpError(404, 'Talep bulunamadı.');
         }
@@ -132,7 +136,7 @@ final class Approvals
             match ($a->action) {
                 'member.create' => MemberAdmin::create((string) $p['accountId'], (string) $p['displayName'], (array) $p['roles'], (array) ($p['ipAllowlist'] ?? []), $approver->accountId, (string) $a->requested_by),
                 'member.roles' => MemberAdmin::setRoles((string) $p['accountId'], (array) $p['roles'], (int) $p['version'], $approver->accountId),
-                'account.claims' => AccountAdmin::applyClaims((string) $p['accountId'], ['admin' => (bool) $p['admin'], 'brandFinance' => (bool) $p['brandFinance'], 'accountErasureOperator' => (bool) $p['accountErasureOperator']], (int) $p['version']),
+                'account.claims' => Tx::run(static fn (): array => AccountAdmin::applyClaims((string) $p['accountId'], ['admin' => (bool) $p['admin'], 'brandFinance' => (bool) $p['brandFinance'], 'accountErasureOperator' => (bool) $p['accountErasureOperator']], (int) $p['version'])),
                 'role.permissions' => RoleAdmin::update((string) $p['key'], array_intersect_key($p, ['version' => 1, 'name' => 1, 'description' => 1, 'permissions' => 1])),
                 'setting.update' => Settings::put((string) $p['key'], $p['value'], (int) $p['version'], $approver->accountId),
                 default => throw new HttpError(409, 'Bilinmeyen işlem.'),
@@ -150,7 +154,7 @@ final class Approvals
     /** Suresi gecen bekleyen talepler (panel:housekeeping). */
     public static function expire(bool $apply): int
     {
-        $q = DB::table('panel_approvals')->where('status', 'pending')->where('expires_at', '<=', Clock::db());
+        $q = PanelDb::table('panel_approvals')->where('status', 'pending')->where('expires_at', '<=', Clock::db());
         if (! $apply) {
             return $q->count();
         }

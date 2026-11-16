@@ -3,10 +3,34 @@
 use Illuminate\Support\Str;
 use Pdo\Mysql;
 
-$migratorCnf = env('DB_MIGRATOR_CNF');
+// Panel migration'lari icin DDL yetkili ayri kullanici (istege bagli). Kimlik [client] bicimli dosyadan okunur;
+// PANEL_DB_MIGRATOR_CNF yalniz migrate komutunda verilir, config:cache icine sir girmez.
+$migratorCnf = env('PANEL_DB_MIGRATOR_CNF');
 $migrator = is_string($migratorCnf) && $migratorCnf !== '' && is_readable($migratorCnf)
     ? (parse_ini_file($migratorCnf, true, INI_SCANNER_RAW)['client'] ?? [])
     : [];
+
+// Panel veritabani ayri bir MySQL veritabanidir (PANEL_DB_DATABASE zorunlu). Sunucu, port, soket ve TLS verilmezse
+// ana baglantininki; PANEL_DB_USERNAME verilmezse ana kullanici ve sifresi kullanilir.
+$panel = [
+    'driver' => 'mysql',
+    'host' => env('PANEL_DB_HOST') ?: env('DB_HOST', '127.0.0.1'),
+    'port' => env('PANEL_DB_PORT') ?: env('DB_PORT', '3306'),
+    'database' => env('PANEL_DB_DATABASE', ''),
+    'username' => env('PANEL_DB_USERNAME') ?: env('DB_USERNAME', 'root'),
+    'password' => env('PANEL_DB_USERNAME') ? env('PANEL_DB_PASSWORD', '') : env('DB_PASSWORD', ''),
+    'unix_socket' => env('PANEL_DB_SOCKET') ?: env('DB_SOCKET', ''),
+    'charset' => 'utf8mb4',
+    'collation' => 'utf8mb4_tr_0900_ai_ci',
+    'prefix' => '',
+    'prefix_indexes' => true,
+    'strict' => true,
+    'timezone' => '+00:00',
+    'engine' => 'InnoDB',
+    'options' => extension_loaded('pdo_mysql') ? array_filter([
+        Mysql::ATTR_SSL_CA => env('PANEL_MYSQL_ATTR_SSL_CA') ?: env('MYSQL_ATTR_SSL_CA'),
+    ]) : [],
+];
 
 return [
 
@@ -22,6 +46,8 @@ return [
     |
     */
 
+    // Varsayilan baglanti ana Otosanayide veritabanidir: vendor edilen alan cekirdegi (app/Domain) baglanti adi
+    // vermeden yazar. Panel tablolari yalniz App\Panel\Support\PanelDb uzerinden `panel` baglantisina gider.
     'default' => env('DB_CONNECTION', 'mysql'),
 
     /*
@@ -70,28 +96,11 @@ return [
             ]) : [],
         ],
 
-        // Yalniz `php artisan migrate --database=mysql_migrator` icin: DDL yetkili ayri kullanici.
-        // Kimlik DB_MIGRATOR_CNF ile verilen [client] dosyasindan okunur (mysqlnd dosyayi kendisi okuyamaz).
-        // DB_MIGRATOR_CNF yalniz migrate komutunda verilir; config:cache icine sir girmez (bkz. docs/DEPLOY.md).
-        'mysql_migrator' => [
-            'driver' => 'mysql',
-            'host' => env('DB_HOST', '127.0.0.1'),
-            'port' => env('DB_PORT', '3306'),
-            'database' => env('DB_DATABASE', 'otosanayide'),
-            'username' => $migrator['user'] ?? null,
-            'password' => $migrator['password'] ?? null,
-            'unix_socket' => env('DB_SOCKET', ''),
-            'charset' => 'utf8mb4',
-            'collation' => 'utf8mb4_tr_0900_ai_ci',
-            'prefix' => '',
-            'prefix_indexes' => true,
-            'strict' => true,
-            'timezone' => '+00:00',
-            'engine' => 'InnoDB',
-            'options' => extension_loaded('pdo_mysql') ? array_filter([
-                Mysql::ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
-            ]) : [],
-        ],
+        // Panel veritabani: panel_* tablolari ve panel_migrations defteri. Ana API verisi `mysql` baglantisindadir.
+        'panel' => $panel,
+
+        // Yalniz `php artisan migrate --database=panel_migrator` icin: panel veritabaninda DDL yetkili ayri kullanici.
+        'panel_migrator' => ['username' => $migrator['user'] ?? null, 'password' => $migrator['password'] ?? null] + $panel,
 
         'mariadb' => [
             'driver' => 'mariadb',
@@ -157,8 +166,8 @@ return [
     */
 
     'migrations' => [
-        // Ana API `migrations` tablosunu kullanir; panel kendi defterini ayri tutar (ayni veritabani).
-        'table' => env('DB_MIGRATIONS_TABLE', 'panel_migrations'),
+        // Defter panel veritabanindadir (App\Panel\Support\PanelMigrator); ad, ana API `migrations` defteriyle karismasin diye ayridir.
+        'table' => 'panel_migrations',
         'update_date_on_publish' => true,
     ],
 

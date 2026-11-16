@@ -9,9 +9,9 @@ use App\Panel\Http\Paging;
 use App\Panel\Http\Respond;
 use App\Panel\Settings\Settings;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 /** Ikinci kontrol talepleri, denetim kaydi ve panel ayarlari. */
 final class GovernanceController extends PanelController
@@ -19,7 +19,7 @@ final class GovernanceController extends PanelController
     public function approvals(Request $request): JsonResponse
     {
         $f = $this->query($request, ['status' => ['nullable', 'in:pending,approved,rejected,cancelled,expired,failed'], 'action' => ['nullable', 'in:'.implode(',', array_keys(Approvals::ACTIONS))], 'mine' => ['nullable', 'in:true,false']]);
-        $q = DB::table('panel_approvals')->orderByDesc('created_at');
+        $q = PanelDb::table('panel_approvals')->orderByDesc('created_at');
         if (isset($f['status'])) {
             $q->where('status', $f['status']);
         }
@@ -37,7 +37,7 @@ final class GovernanceController extends PanelController
 
     public function approval(Request $request, string $id): JsonResponse
     {
-        $a = DB::table('panel_approvals')->where('id', $id)->first() ?? $this->notFound('Talep');
+        $a = PanelDb::table('panel_approvals')->where('id', $id)->first() ?? $this->notFound('Talep');
 
         return Respond::data(Approvals::view($a));
     }
@@ -84,7 +84,7 @@ final class GovernanceController extends PanelController
             'subjectType' => ['nullable', 'string', 'max:48'], 'subjectId' => ['nullable', 'string', 'max:191'],
             'outcome' => ['nullable', 'in:success,denied,failed'], 'from' => ['nullable', 'date'], 'to' => ['nullable', 'date'],
         ]);
-        $q = DB::table('panel_audit_logs')->orderByDesc('id');
+        $q = PanelDb::table('panel_audit_logs')->orderByDesc('id');
         foreach (['actorId' => 'actor_id', 'subjectType' => 'subject_type', 'subjectId' => 'subject_id', 'outcome' => 'outcome'] as $k => $col) {
             if (isset($f[$k])) {
                 $q->where($col, $f[$k]);
@@ -108,7 +108,7 @@ final class GovernanceController extends PanelController
 
     public function auditLog(Request $request, string $id): JsonResponse
     {
-        $row = DB::table('panel_audit_logs')->where('id', (int) $id)->first() ?? $this->notFound('Denetim kaydı');
+        $row = PanelDb::table('panel_audit_logs')->where('id', (int) $id)->first() ?? $this->notFound('Denetim kaydı');
 
         return Respond::data(Audit::view($row));
     }

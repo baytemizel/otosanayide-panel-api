@@ -6,8 +6,8 @@ use App\Domain\Auth\Totp;
 use App\Exceptions\HttpError;
 use App\Panel\Security\Ip;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use App\Panel\Support\Secret;
-use App\Support\Tx;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -46,15 +46,28 @@ final class PanelAuth
     // Ana API AuthService::DUMMY_HASH ile ayni: hesap yokken de ayni maliyette dogrulama.
     private const DUMMY_HASH = '$argon2id$v=19$m=65536,t=3,p=1$VTZGYkpqd0hISEN1MWJQNw$0EdfUhE7acbqW9b3KRnA7R7mHjRG/ZZxWdNMZvtM/qY';
 
-    /** Hesap + uyelik + silme cercevesi tek sorguda. */
+    /**
+     * Hesap + silme cercevesi ana veritabanindan, uyelik panel veritabanindan (iki sorgu, join yok).
+     * Uyelik sorgusu hesap bulunmasa da calisir: giris yaniti suresi hesabin varligini ele vermesin.
+     */
     public static function account(string $column, string $value): ?stdClass
     {
-        return DB::table('auth_accounts as a')
-            ->leftJoin('panel_members as m', 'm.account_id', '=', 'a.id')
+        $a = DB::table('auth_accounts as a')
             ->leftJoin('account_fences as f', 'f.owner_uid', '=', 'a.id')
             ->where('a.'.$column, $value)
-            ->first(['a.id', 'a.email', 'a.email_verified_at', 'a.password_hash', 'a.status', 'a.tokens_valid_after',
-                'm.account_id as member_id', 'm.status as member_status', 'm.display_name', 'm.ip_allowlist', 'm.mfa_enroll_until', 'f.state as fence']);
+            ->first(['a.id', 'a.email', 'a.email_verified_at', 'a.password_hash', 'a.status', 'a.tokens_valid_after', 'f.state as fence']);
+        $m = PanelDb::table('panel_members')->where('account_id', $a->id ?? '')
+            ->first(['account_id', 'status', 'display_name', 'ip_allowlist', 'mfa_enroll_until']);
+        if ($a === null) {
+            return null;
+        }
+        $a->member_id = $m?->account_id;
+        $a->member_status = $m?->status;
+        $a->display_name = $m?->display_name;
+        $a->ip_allowlist = $m?->ip_allowlist;
+        $a->mfa_enroll_until = $m?->mfa_enroll_until;
+
+        return $a;
     }
 
     public static function eligible(?stdClass $a, ?string $ip): bool
@@ -62,7 +75,7 @@ final class PanelAuth
         return $a !== null && $a->status === 'active' && $a->email_verified_at !== null && $a->member_id !== null
             && $a->member_status === 'active' && $a->fence === null
             && Ip::allowed($ip, Ip::parseList(json_decode((string) ($a->ip_allowlist ?? 'null'), true)))
-            && DB::table('panel_member_roles')->where('account_id', $a->id)->exists();
+            && PanelDb::table('panel_member_roles')->where('account_id', $a->id)->exists();
     }
 
     /** @return array{step:string,challengeToken:string,challengeExpiresAt:string,secret?:string,otpauthUri?:string,accountId:string} */
@@ -76,7 +89,7 @@ final class PanelAuth
         if (self::mfaLocked($a->id)) {
             throw new HttpError(429, 'Çok fazla hatalı doğrulama kodu. 15 dakika sonra yeniden deneyin.');
         }
-        $factor = DB::table('panel_mfa_factors')->where('account_id', $a->id)->whereNull('disabled_at')->whereNotNull('verified_at')->first();
+        $factor = PanelDb::table('panel_mfa_factors')->where('account_id', $a->id)->whereNull('disabled_at')->whereNotNull('verified_at')->first();
         if ($factor !== null) {
             return ['step' => 'mfa'] + self::challenge($a->id, 'mfa', $factor->id, $ip) + ['accountId' => $a->id];
         }
@@ -85,11 +98,11 @@ final class PanelAuth
             throw new HttpError(403, 'Panel iki adımlı doğrulama kurulum süresi doldu. Bir yöneticiden MFA sıfırlaması isteyin.');
         }
 
-        return Tx::run(static function () use ($a, $ip): array {
-            DB::table('panel_mfa_factors')->where('account_id', $a->id)->whereNull('verified_at')->whereNull('disabled_at')->update(['disabled_at' => Clock::db()]);
+        return PanelDb::tx(static function () use ($a, $ip): array {
+            PanelDb::table('panel_mfa_factors')->where('account_id', $a->id)->whereNull('verified_at')->whereNull('disabled_at')->update(['disabled_at' => Clock::db()]);
             $secret = Totp::newSecret();
             $factorId = Clock::uuid();
-            DB::table('panel_mfa_factors')->insert(['id' => $factorId, 'account_id' => $a->id, 'secret_ciphertext' => Crypt::encryptString($secret), 'created_at' => Clock::db()]);
+            PanelDb::table('panel_mfa_factors')->insert(['id' => $factorId, 'account_id' => $a->id, 'secret_ciphertext' => Crypt::encryptString($secret), 'created_at' => Clock::db()]);
             $issuer = (string) config('panel.mfa.issuer');
             $uri = 'otpauth://totp/'.rawurlencode($issuer.':'.$a->email).'?'.http_build_query(['secret' => $secret, 'issuer' => $issuer, 'algorithm' => 'SHA1', 'digits' => 6, 'period' => Totp::PERIOD], '', '&', PHP_QUERY_RFC3986);
 
@@ -102,7 +115,7 @@ final class PanelAuth
     {
         $token = Secret::token('opc_', 32);
         $expires = Clock::now()->addSeconds((int) config('panel.mfa.challenge_seconds'));
-        DB::table('panel_login_challenges')->insert([
+        PanelDb::table('panel_login_challenges')->insert([
             'token_hash' => Secret::hash($token), 'account_id' => $accountId, 'purpose' => $purpose, 'factor_id' => $factorId,
             'ip_hash' => Ip::hash($ip), 'created_at' => Clock::db(), 'expires_at' => Clock::db($expires),
         ]);
@@ -113,19 +126,19 @@ final class PanelAuth
     /** @return array{tokens:array<string,string>,accountId:string,enrolled:bool} */
     public static function verifyMfa(string $challengeToken, string $code, ?string $ip, string $userAgent): array
     {
-        $result = Tx::run(static function () use ($challengeToken, $code, $ip, $userAgent): array {
-            $c = DB::table('panel_login_challenges')->where('token_hash', Secret::hash($challengeToken))->lockForUpdate()->first();
+        $result = PanelDb::tx(static function () use ($challengeToken, $code, $ip, $userAgent): array {
+            $c = PanelDb::table('panel_login_challenges')->where('token_hash', Secret::hash($challengeToken))->lockForUpdate()->first();
             if ($c === null || $c->consumed_at !== null || Clock::parse($c->expires_at)?->isPast() !== false || $c->attempts >= (int) config('panel.mfa.max_attempts')) {
                 throw new HttpError(401, 'Doğrulama adımı geçersiz veya süresi dolmuş. Yeniden giriş yapın.');
             }
             if (self::mfaLocked($c->account_id)) {
                 throw new HttpError(429, 'Çok fazla hatalı doğrulama kodu. 15 dakika sonra yeniden deneyin.');
             }
-            $factor = DB::table('panel_mfa_factors')->where('id', $c->factor_id)->whereNull('disabled_at')->lockForUpdate()->first();
+            $factor = PanelDb::table('panel_mfa_factors')->where('id', $c->factor_id)->whereNull('disabled_at')->lockForUpdate()->first();
             $step = $factor === null ? null : Totp::matchStep(Crypt::decryptString($factor->secret_ciphertext), $code, time(), $factor->last_used_step === null ? null : (int) $factor->last_used_step);
             if ($step === null) {
                 $attempts = (int) $c->attempts + 1;
-                DB::table('panel_login_challenges')->where('token_hash', $c->token_hash)->update(['attempts' => $attempts, 'consumed_at' => $attempts >= (int) config('panel.mfa.max_attempts') ? Clock::db() : null]);
+                PanelDb::table('panel_login_challenges')->where('token_hash', $c->token_hash)->update(['attempts' => $attempts, 'consumed_at' => $attempts >= (int) config('panel.mfa.max_attempts') ? Clock::db() : null]);
 
                 return ['failed' => true, 'accountId' => $c->account_id];
             }
@@ -135,13 +148,13 @@ final class PanelAuth
             }
             $now = Clock::now();
             $enrolled = $factor->verified_at === null;
-            DB::table('panel_mfa_factors')->where('id', $factor->id)->update(['last_used_step' => $step, 'verified_at' => $factor->verified_at ?? Clock::db($now)]);
+            PanelDb::table('panel_mfa_factors')->where('id', $factor->id)->update(['last_used_step' => $step, 'verified_at' => $factor->verified_at ?? Clock::db($now)]);
             if ($enrolled) {
-                DB::table('panel_mfa_factors')->where('account_id', $c->account_id)->where('id', '!=', $factor->id)->whereNull('disabled_at')->update(['disabled_at' => Clock::db($now)]);
-                DB::table('panel_members')->where('account_id', $c->account_id)->update(['mfa_enroll_until' => null]);
+                PanelDb::table('panel_mfa_factors')->where('account_id', $c->account_id)->where('id', '!=', $factor->id)->whereNull('disabled_at')->update(['disabled_at' => Clock::db($now)]);
+                PanelDb::table('panel_members')->where('account_id', $c->account_id)->update(['mfa_enroll_until' => null]);
             }
-            DB::table('panel_login_challenges')->where('token_hash', $c->token_hash)->update(['consumed_at' => Clock::db($now)]);
-            DB::table('panel_members')->where('account_id', $c->account_id)->update(['last_login_at' => Clock::db($now), 'last_login_ip_hash' => Ip::hash($ip)]);
+            PanelDb::table('panel_login_challenges')->where('token_hash', $c->token_hash)->update(['consumed_at' => Clock::db($now)]);
+            PanelDb::table('panel_members')->where('account_id', $c->account_id)->update(['last_login_at' => Clock::db($now), 'last_login_ip_hash' => Ip::hash($ip)]);
 
             return ['tokens' => Sessions::issue($c->account_id, $ip, $userAgent, $now), 'accountId' => $c->account_id, 'enrolled' => $enrolled];
         });
@@ -157,8 +170,8 @@ final class PanelAuth
     /** @return array{tokens:array<string,string>,accountId:string} */
     public static function refresh(string $refreshToken, ?string $ip, string $userAgent): array
     {
-        $result = Tx::run(static function () use ($refreshToken, $ip, $userAgent): array {
-            $s = DB::table('panel_sessions')->where('refresh_token_hash', Secret::hash($refreshToken))->lockForUpdate()->first();
+        $result = PanelDb::tx(static function () use ($refreshToken, $ip, $userAgent): array {
+            $s = PanelDb::table('panel_sessions')->where('refresh_token_hash', Secret::hash($refreshToken))->lockForUpdate()->first();
             if ($s === null) {
                 throw new HttpError(401, self::INVALID_SESSION);
             }
@@ -167,7 +180,7 @@ final class PanelAuth
                 if ($s->revoke_reason !== 'rotated') {
                     throw new HttpError(401, self::INVALID_SESSION);
                 }
-                $successor = $s->replaced_by === null ? null : DB::table('panel_sessions')->where('id', $s->replaced_by)->lockForUpdate()->first();
+                $successor = $s->replaced_by === null ? null : PanelDb::table('panel_sessions')->where('id', $s->replaced_by)->lockForUpdate()->first();
                 $recent = Clock::parse($s->revoked_at)?->greaterThan($now->subSeconds(self::REFRESH_GRACE_SECONDS)) === true;
                 if (! $recent || $successor === null || $successor->revoked_at !== null) {
                     // Donmus jeton tekrar kullanildi: aile kapanir.
@@ -176,8 +189,8 @@ final class PanelAuth
                     return ['reuse' => true, 'accountId' => $s->account_id];
                 }
                 // Tolerans: ayni anda iki yenileme ya da yaniti kaybolan tekrar. Ilk ardil iptal edilir, yenisi verilir.
-                DB::table('panel_access_tokens')->where('session_id', $successor->id)->delete();
-                DB::table('panel_sessions')->where('id', $successor->id)->update(['revoked_at' => Clock::db($now), 'revoke_reason' => 'retried']);
+                PanelDb::table('panel_access_tokens')->where('session_id', $successor->id)->delete();
+                PanelDb::table('panel_sessions')->where('id', $successor->id)->update(['revoked_at' => Clock::db($now), 'revoke_reason' => 'retried']);
             }
             if (Clock::parse($s->idle_expires_at)?->lessThanOrEqualTo($now) || Clock::parse($s->expires_at)?->lessThanOrEqualTo($now)) {
                 Sessions::revokeFamily($s->family_id, 'expired');
@@ -191,7 +204,7 @@ final class PanelAuth
                 return ['expired' => true, 'accountId' => $s->account_id];
             }
             $tokens = Sessions::issue($s->account_id, $ip, $userAgent, Clock::parse($s->mfa_at) ?? $now, $s->family_id, Clock::parse($s->expires_at));
-            DB::table('panel_sessions')->where('id', $s->id)->update(['revoked_at' => $s->revoked_at ?? Clock::db($now), 'revoke_reason' => 'rotated', 'replaced_by' => $tokens['sessionId']]);
+            PanelDb::table('panel_sessions')->where('id', $s->id)->update(['revoked_at' => $s->revoked_at ?? Clock::db($now), 'revoke_reason' => 'rotated', 'replaced_by' => $tokens['sessionId']]);
 
             return ['tokens' => $tokens, 'accountId' => $s->account_id];
         });
@@ -208,7 +221,7 @@ final class PanelAuth
     /** Yenileme jetonuyla cikis (Bearer yokken); bilinmeyen jeton sessizce yok sayilir. */
     public static function logoutByRefresh(string $refreshToken): ?string
     {
-        $s = DB::table('panel_sessions')->where('refresh_token_hash', Secret::hash($refreshToken))->first();
+        $s = PanelDb::table('panel_sessions')->where('refresh_token_hash', Secret::hash($refreshToken))->first();
         if ($s === null) {
             return null;
         }
@@ -220,7 +233,7 @@ final class PanelAuth
     /** Her istekte: jeton -> oturum -> hesap -> uyelik -> cerceve -> IP -> roller. */
     public static function resolve(string $bearer, ?string $ip): Member
     {
-        $row = DB::table('panel_access_tokens as t')
+        $row = PanelDb::table('panel_access_tokens as t')
             ->join('panel_sessions as s', 's.id', '=', 't.session_id')
             ->where('t.token_hash', Secret::hash($bearer))
             ->first(['t.id as token_id', 't.expires_at', 't.created_at as token_created_at', 't.last_used_at', 't.account_id',
@@ -236,7 +249,7 @@ final class PanelAuth
             throw new HttpError(401, self::INVALID_SESSION);
         }
         if ($row->last_used_at === null || Clock::parse($row->last_used_at)?->lessThan($now->subMinute())) {
-            DB::table('panel_access_tokens')->where('id', $row->token_id)->update(['last_used_at' => Clock::db($now)]);
+            PanelDb::table('panel_access_tokens')->where('id', $row->token_id)->update(['last_used_at' => Clock::db($now)]);
         }
         $p = Permissions::forAccount($a->id);
 

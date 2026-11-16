@@ -3,7 +3,7 @@
 namespace App\Panel\Auth;
 
 use App\Panel\Settings\Settings;
-use Illuminate\Support\Facades\DB;
+use App\Panel\Support\PanelDb;
 
 /** Uyenin rolleri ve yetkileri (veritabanindan). super_admin katalogdaki her yetkiyi alir. */
 final class Permissions
@@ -11,7 +11,7 @@ final class Permissions
     /** @return array{roles:list<string>,permissions:array<string,true>} */
     public static function forAccount(string $accountId): array
     {
-        $rows = DB::table('panel_member_roles as mr')
+        $rows = PanelDb::table('panel_member_roles as mr')
             ->join('panel_roles as r', 'r.id', '=', 'mr.role_id')
             ->leftJoin('panel_role_permissions as rp', 'rp.role_id', '=', 'r.id')
             ->leftJoin('panel_permissions as p', 'p.id', '=', 'rp.permission_id')
@@ -52,12 +52,12 @@ final class Permissions
         if ($key === 'super_admin' || in_array($key, self::privilegedRoles(), true)) {
             return true;
         }
-        $roleId = DB::table('panel_roles')->where('key', $key)->value('id');
+        $roleId = PanelDb::table('panel_roles')->where('key', $key)->value('id');
         if ($roleId === null) {
             return false;
         }
 
-        return DB::table('panel_role_permissions as rp')->join('panel_permissions as p', 'p.id', '=', 'rp.permission_id')
+        return PanelDb::table('panel_role_permissions as rp')->join('panel_permissions as p', 'p.id', '=', 'rp.permission_id')
             ->where('rp.role_id', $roleId)->whereIn('p.key', self::sensitive())->exists();
     }
 

@@ -4,9 +4,9 @@ namespace App\Panel\Auth;
 
 use App\Panel\Security\Ip;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use App\Panel\Support\Secret;
 use Carbon\CarbonImmutable;
-use Illuminate\Support\Facades\DB;
 
 /** Panel oturumu: kisa omurlu erisim jetonu + donen yenileme jetonu (aile), hareketsizlik ve mutlak sure. */
 final class Sessions
@@ -24,7 +24,7 @@ final class Sessions
         if ($idle->greaterThan($absolute)) {
             $idle = $absolute;
         }
-        DB::table('panel_sessions')->insert([
+        PanelDb::table('panel_sessions')->insert([
             'id' => $id,
             'account_id' => $accountId,
             'family_id' => $familyId ?? Clock::uuid(),
@@ -57,7 +57,7 @@ final class Sessions
         if ($expires->greaterThan($absolute)) {
             $expires = $absolute;
         }
-        DB::table('panel_access_tokens')->insert([
+        PanelDb::table('panel_access_tokens')->insert([
             'session_id' => $sessionId,
             'account_id' => $accountId,
             'token_hash' => Secret::hash($token),
@@ -71,24 +71,24 @@ final class Sessions
     /** Ailenin tum oturumlarini kapatir ve erisim jetonlarini siler. */
     public static function revokeFamily(string $familyId, string $reason): int
     {
-        $ids = DB::table('panel_sessions')->where('family_id', $familyId)->pluck('id')->all();
-        DB::table('panel_access_tokens')->whereIn('session_id', $ids)->delete();
+        $ids = PanelDb::table('panel_sessions')->where('family_id', $familyId)->pluck('id')->all();
+        PanelDb::table('panel_access_tokens')->whereIn('session_id', $ids)->delete();
 
-        return DB::table('panel_sessions')->where('family_id', $familyId)->whereNull('revoked_at')->update(['revoked_at' => Clock::db(), 'revoke_reason' => $reason]);
+        return PanelDb::table('panel_sessions')->where('family_id', $familyId)->whereNull('revoked_at')->update(['revoked_at' => Clock::db(), 'revoke_reason' => $reason]);
     }
 
     /** Uyenin tum panel oturumlari (rol degisimi, askiya alma, MFA sifirlama). */
     public static function revokeAccount(string $accountId, string $reason): int
     {
-        DB::table('panel_access_tokens')->where('account_id', $accountId)->delete();
+        PanelDb::table('panel_access_tokens')->where('account_id', $accountId)->delete();
 
-        return DB::table('panel_sessions')->where('account_id', $accountId)->whereNull('revoked_at')->update(['revoked_at' => Clock::db(), 'revoke_reason' => $reason]);
+        return PanelDb::table('panel_sessions')->where('account_id', $accountId)->whereNull('revoked_at')->update(['revoked_at' => Clock::db(), 'revoke_reason' => $reason]);
     }
 
     /** @return list<array<string,mixed>> Aile basina etkin son oturum. */
     public static function active(string $accountId): array
     {
-        $rows = DB::table('panel_sessions')->where('account_id', $accountId)->whereNull('revoked_at')
+        $rows = PanelDb::table('panel_sessions')->where('account_id', $accountId)->whereNull('revoked_at')
             ->where('expires_at', '>', Clock::db())->where('idle_expires_at', '>', Clock::db())->orderByDesc('created_at')->get();
 
         return $rows->map(static fn (\stdClass $s): array => [

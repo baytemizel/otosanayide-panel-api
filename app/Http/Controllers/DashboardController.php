@@ -6,6 +6,7 @@ use App\Domain\Admin\AdminOverview;
 use App\Panel\Http\Respond;
 use App\Panel\Stats\Stats;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use App\Panel\WorkItems\WorkItems;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,8 +24,8 @@ final class DashboardController extends PanelController
             'generatedAt' => Clock::iso(Clock::db()),
             'sourceQueues' => Stats::queueCounts(),
             'workItems' => WorkItems::summary($m->accountId),
-            'approvalsPending' => DB::table('panel_approvals')->where('status', 'pending')->where('expires_at', '>', Clock::db())->count(),
-            'supportGrantsActive' => DB::table('panel_support_grants')->whereNull('revoked_at')->where('expires_at', '>', Clock::db())->count(),
+            'approvalsPending' => PanelDb::table('panel_approvals')->where('status', 'pending')->where('expires_at', '>', Clock::db())->count(),
+            'supportGrantsActive' => PanelDb::table('panel_support_grants')->whereNull('revoked_at')->where('expires_at', '>', Clock::db())->count(),
             'catalogue' => DB::table('businesses')->selectRaw('count(*) as total, sum(published = 1) as published')->first(),
         ]);
     }
@@ -48,7 +49,7 @@ final class DashboardController extends PanelController
     public function snapshots(Request $request): JsonResponse
     {
         $f = $this->query($request, ['metric' => ['required', 'string', 'max:64'], 'dimension' => ['nullable', 'string', 'max:120'], 'from' => ['nullable', 'date'], 'to' => ['nullable', 'date']]);
-        $q = DB::table('panel_stat_snapshots')->where('metric', $f['metric'])->orderBy('snapshot_date')->orderBy('dimension');
+        $q = PanelDb::table('panel_stat_snapshots')->where('metric', $f['metric'])->orderBy('snapshot_date')->orderBy('dimension');
         if (isset($f['dimension'])) {
             $q->where('dimension', $f['dimension']);
         }

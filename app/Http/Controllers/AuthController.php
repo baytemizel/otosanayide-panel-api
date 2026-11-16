@@ -12,10 +12,10 @@ use App\Panel\Auth\RefreshReused;
 use App\Panel\Auth\Sessions;
 use App\Panel\Http\Respond;
 use App\Panel\Security\Ip;
+use App\Panel\Support\PanelDb;
 use App\Panel\Support\Secret;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Symfony\Component\HttpFoundation\Cookie;
 
@@ -94,7 +94,7 @@ final class AuthController extends PanelController
         $bearer = preg_match('/^Bearer (opa_[A-Za-z0-9_-]{20,80})$/D', (string) $request->headers->get('Authorization'), $m) === 1 ? $m[1] : null;
         $accountId = null;
         if ($bearer !== null) {
-            $row = DB::table('panel_access_tokens as t')->join('panel_sessions as s', 's.id', '=', 't.session_id')->where('t.token_hash', Secret::hash($bearer))->first(['s.family_id', 's.account_id']);
+            $row = PanelDb::table('panel_access_tokens as t')->join('panel_sessions as s', 's.id', '=', 't.session_id')->where('t.token_hash', Secret::hash($bearer))->first(['s.family_id', 's.account_id']);
             if ($row !== null) {
                 Sessions::revokeFamily($row->family_id, 'logout');
                 $accountId = $row->account_id;
@@ -129,7 +129,7 @@ final class AuthController extends PanelController
     public function revokeSession(Request $request, string $familyId): JsonResponse
     {
         $m = $this->member($request);
-        if (! DB::table('panel_sessions')->where('family_id', $familyId)->where('account_id', $m->accountId)->exists()) {
+        if (! PanelDb::table('panel_sessions')->where('family_id', $familyId)->where('account_id', $m->accountId)->exists()) {
             $this->notFound('Oturum');
         }
         Sessions::revokeFamily($familyId, 'logout');

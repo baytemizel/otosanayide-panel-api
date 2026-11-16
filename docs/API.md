@@ -11,12 +11,14 @@ Durum: kod hazırlığı ve bağlantısız yerel test. Hiçbir veritabanına ba�
 ## 1. Mimari
 
 ```
-Panel ön yüzü ──HTTPS + Bearer──▶ otosanayide-panel-api ──┐
-                                                          ├──▶ MySQL (ana API veritabanı)   
-Web / portal / mobil ───────────▶ otosanayide-api ────────┘
+Panel ön yüzü ──HTTPS + Bearer──▶ otosanayide-panel-api ──┬──▶ MySQL: panel veritabanı (panel_*)
+                                                          │
+                                                          └──▶ MySQL: ana Otosanayide veritabanı
+                                                                 ▲
+Web / portal / mobil ───────────▶ otosanayide-api ───────────────┘
 ```
 
-- **Aynı veritabanı.** Panel, ana API'nin tablolarını okur ve yönetim kararlarını yazar. Kendi verisi yalnız `panel_*` tablolarındadır ve ayrı migration defteri (`panel_migrations`) kullanır. Ana API tablolarına migration yazmaz.
+- **İki veritabanı (K210).** Panel, ana Otosanayide veritabanına (`DB_*`, varsayılan bağlantı) ve kendi panel veritabanına (`PANEL_DB_*`, `panel` bağlantısı) bağlanır. Ana API'nin tablolarını okur ve yönetim kararlarını ana veritabanına yazar. Kendi verisi yalnız panel veritabanındaki `panel_*` tablolarındadır (defter `panel_migrations`). Ana veritabanına migration yazmaz. İki veritabanı arasında join, yabancı anahtar ve ortak transaction yoktur; ayrıntı `docs/SCHEMA.md`.
 - **Aynı iş kuralları.** Moderasyon, sahiplik, katalog yayını, gizlilik, reklam ve marka finansı kararları ana API'nin alan çekirdeğiyle verilir: `app/Domain`, `app/Support`, `app/Exceptions`, `app/Jobs`, `app/Models` ana API `d4ed6f8` commit'inden **birebir kopyadır** (87 dosya, `core-manifest.json`). Böylece sürüm denetimi, hesap silme çerçeveleri (fence), kendi içeriğini inceleyememe, yorum toplamları, arama projeksiyonu ve CDN yansısı ana API ile aynı çalışır. Kopya elle değiştirilmez; `php artisan panel:core-check` kaymayı bildirir.
 - **Panel kendi katmanı.** Kimlik doğrulama (ayrı TOTP ve oturum), rol/yetki, denetim kaydı, ikinci kontrol (dört göz), iş kuyruğu, iç notlar, süreli destek erişimi, sınıflandırma listeleri, ayarlar ve istatistik anlık görüntüleri.
 - **Kuyruk.** Katalog yayını gibi kararlar ana API'nin `SyncBusinessMediaCdn` işini paylaşılan `jobs` tablosuna yazabilir; sınıf adı iki uygulamada aynıdır, ana API işçisi işler.
@@ -209,7 +211,7 @@ Panelde olmayanlar: marka görseli yükleme ve önizleme görüntüsü (`/api/ad
 
 | Yapılan | Sonuç |
 |---|---|
-| `composer test` (bağlantısız, DB_PORT=1) | 37 test, 990 doğrulama geçti: migration'ların MySQL DDL'ine derlenmesi, rota–belge eşleşmesi, yetki kataloğu, hassas yetki ve ürün kuralları, kimlik doğrulama öncesi HTTP davranışı, CORS, IP listesi, çekirdek kopyası özetleri |
+| `composer test` (bağlantısız, DB_PORT=1, PANEL_DB_PORT=1) | K210 sonrası 45 test, 1.400 doğrulama geçti (iki veritabanı ayrımı: migration'ların yalnız panel bağlantısında derlenmesi ve ana veritabanına yabancı anahtar olmaması, migrator'ın `mysql`'i reddetmesi, kaynakta panel tablosuna varsayılan bağlantıdan ve karışık join ile erişilmemesi, `db:wipe`/`migrate:fresh` kapalı); ilk sürümde 37 test: migration'ların MySQL DDL'ine derlenmesi, rota–belge eşleşmesi, yetki kataloğu, hassas yetki ve ürün kuralları, kimlik doğrulama öncesi HTTP davranışı, CORS, IP listesi, çekirdek kopyası özetleri |
 | Bağımsız kod incelemesi (veritabanı yolları) | 10 bulgu düzeltildi: denetim kaydı istek kimliği uzunluğu, hassas yetkiyle ikinci kontrol atlatma, talebin konusunun onaylaması, panel üyesinin hesabının `accounts.manage` ile kapatılması, MFA tahmin sınırı, yenileme yarışı, iş kuyruğu yetkisi, reklam kampanyası `id` filtresi, çıkışta yenileme ailesi, boşta kalan oturum listesi ve sürüm metni |
 | PHPStan seviye 6 | Hatasız (vendor edilen `ActorResolver` için tek yol kısıtlı istisna) |
 | Pint | Panel dosyalarında temiz (çekirdek kopyası hariç) |

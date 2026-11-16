@@ -1,8 +1,17 @@
 # Panel veri modeli
 
-Panel, ana API ile aynı MySQL 8.4 veritabanını kullanır. **Yalnız `panel_*` tabloları bu deponun migration'larıyla oluşur**; ana API tablolarına migration yazılmaz. Migration defteri ayrıdır: `panel_migrations` (`DB_MIGRATIONS_TABLE`). Karakter seti ve sıralama ana API ile aynıdır (`utf8mb4_tr_0900_ai_ci`, kimlikler `utf8mb4_bin`, zamanlar `DATETIME(3)` UTC).
+Panel iki MySQL 8.4 veritabanına bağlanır (K210):
 
-**Ön koşul:** ana API'nin 14 migration'ı aynı veritabanında uygulanmış olmalı (`panel_members.account_id → auth_accounts.id` yabancı anahtarı). Sıra: önce ana API `migrate`, sonra panel `migrate`.
+| Bağlantı | Veritabanı | Ne var | Ortam |
+|---|---|---|---|
+| `mysql` (varsayılan) | Ana Otosanayide veritabanı (ana API ile ortak) | Ana API tabloları; panel bunları okur ve kararları ana API çekirdeğiyle yazar. Ayrıca paylaşılan `cache` ve `jobs` | `DB_*` |
+| `panel` | Panel veritabanı (ayrı) | Yalnız `panel_*` tabloları ve `panel_migrations` defteri | `PANEL_DB_*` |
+
+**Yalnız `panel_*` tabloları bu deponun migration'larıyla ve yalnız panel veritabanında oluşur**; ana veritabanına migration yazılmaz (`App\Panel\Support\PanelMigrator` `--database=mysql`'i reddeder, `--database` verilmezse `panel` kullanılır). Karakter seti ve sıralama ana API ile aynıdır (`utf8mb4_tr_0900_ai_ci`, kimlikler `utf8mb4_bin`, zamanlar `DATETIME(3)` UTC).
+
+**İki veritabanı arasında** join, yabancı anahtar ve ortak transaction yoktur. Hesap bilgisi (e-posta, durum) ana veritabanından ayrı sorguyla okunur; panel üyeliği oluşturulurken hesabın varlığı ana veritabanında denetlenir; giriş ve her istek hesabı yeniden doğrular. Hesabı ana veritabanında bulunmayan üye giriş yapamaz ve `panel:doctor --db` tarafından raporlanır. İki tarafa yazan işlemde panel yazımı önce `PanelDb::tx` içinde yapılır, ana veritabanı yazımı o transaction'ın son adımıdır (hesabı devre dışı bırakma, platform yetkisi onayı).
+
+**Ön koşul:** ana API'nin migration'ları ana veritabanında uygulanmış olmalı (panel bu tabloları okur). Panel veritabanı boş oluşturulur; sıra: önce ana API `migrate`, sonra panel `migrate`.
 
 | Migration | Tablolar |
 |---|---|
@@ -20,7 +29,7 @@ Migration'lar yalnız `CREATE TABLE` üretir (`tests/Unit/MigrationsCompileTest.
 | `panel_roles` | Sistem ve özel roller | `key` UNIQUE, `is_system`, `version` |
 | `panel_permissions` | Yetki kataloğu | `key` UNIQUE, `group` |
 | `panel_role_permissions` | Rol–yetki | PK (`role_id`,`permission_id`), iki FK cascade |
-| `panel_members` | Panel üyeliği | PK `account_id` → `auth_accounts.id` (cascade), `status` active/suspended, `ip_allowlist` JSON, `mfa_enroll_until`, `last_login_ip_hash`, `version` |
+| `panel_members` | Panel üyeliği | PK `account_id` (ana veritabanındaki `auth_accounts.id`; yabancı anahtar yok), `status` active/suspended, `ip_allowlist` JSON, `mfa_enroll_until`, `last_login_ip_hash`, `version` |
 | `panel_member_roles` | Üye–rol | PK (`account_id`,`role_id`), rol silme kısıtlı |
 | `panel_mfa_factors` | Panel TOTP | `secret_ciphertext` (panel `APP_KEY` ile `Crypt`), `last_used_step` (tekrar kullanım engeli), `verified_at`, `disabled_at` |
 | `panel_login_challenges` | Şifre sonrası tek kullanımlık MFA/kurulum adımı | PK `token_hash` (SHA-256), `purpose`, `attempts`, `expires_at`, `consumed_at` |
@@ -41,7 +50,7 @@ Jetonlar ve yenileme jetonları yalnız SHA-256 özetiyle saklanır; ham IP yaz�
 | `panel_support_grants` | Süreli destek erişimi | `member_id`, `account_id`, `scopes` JSON, `reason`, `expires_at`, `revoked_at` |
 | `panel_settings` | Ayarlar | PK `key`, `value` JSON, `version` |
 
-Ana API tablolarına yabancı anahtar verilmez (yalnız `panel_members → auth_accounts`): konu kaydı silinse de denetim ve not izi kalır.
+Ana veritabanı tablolarına yabancı anahtar yoktur (ayrı veritabanı): konu kaydı silinse de denetim ve not izi kalır.
 
 ## Sınıflandırma
 
@@ -57,9 +66,9 @@ Kategori kimliği ana API'deki `business_values.value` ve `business_search_facet
 
 `panel_stat_snapshots`: PK (`snapshot_date`,`metric`,`dimension`), yalnız sayı. Ölçüler: `businesses.*`, `businesses.published_by_city`, `accounts.*`, `queue.open`, `reviews.published`.
 
-## Panelin yazdığı ana API tabloları
+## Panelin yazdığı ana API tabloları (ana veritabanı)
 
-Panel, aşağıdaki tablolara **yalnız ana API çekirdeği aracılığıyla** (birebir kopya kod) veya ana API'nin aynı kuralıyla yazar:
+Panel, ana veritabanındaki aşağıdaki tablolara **yalnız ana API çekirdeği aracılığıyla** (birebir kopya kod) veya ana API'nin aynı kuralıyla yazar:
 
 | Akış | Tablolar |
 |---|---|

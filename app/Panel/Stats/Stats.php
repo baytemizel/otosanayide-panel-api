@@ -3,6 +3,7 @@
 namespace App\Panel\Stats;
 
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use App\Panel\WorkItems\Queues;
 use Illuminate\Support\Facades\DB;
 
@@ -56,7 +57,7 @@ final class Stats
             'createdLast7Days' => (int) ($t->last7 ?? 0),
             'platformAdmins' => (int) ($t->admins ?? 0),
             'businessMembers' => DB::table('business_memberships')->where('active', true)->distinct()->count('user_id'),
-            'panelMembers' => DB::table('panel_members')->where('status', 'active')->count(),
+            'panelMembers' => PanelDb::table('panel_members')->where('status', 'active')->count(),
         ];
     }
 

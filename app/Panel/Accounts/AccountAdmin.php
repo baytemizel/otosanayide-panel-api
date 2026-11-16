@@ -3,7 +3,6 @@
 namespace App\Panel\Accounts;
 
 use App\Exceptions\HttpError;
-use App\Panel\Auth\Sessions;
 use App\Panel\Support\Clock;
 use Illuminate\Support\Facades\DB;
 use stdClass;
@@ -12,6 +11,7 @@ use stdClass;
  * Platform hesabi (auth_accounts) uzerindeki panel islemleri. Ana API ActorResolver kurallariyla uyumludur:
  * `status=disabled` girisi ve jetonlari reddeder; `tokens_valid_after` oncesi jetonlar gecersizdir;
  * yenileme oturumlari `revoked_at` ile kapanir. `erasing` durumundaki hesaba dokunulmaz (silme koordinatoru).
+ * Yalniz ana veritabanina yazar; cagiran `Tx::run` icinde, panel yazimi varsa PanelDb::tx'in son adimi olarak cagirir.
  */
 final class AccountAdmin
 {
@@ -72,9 +72,8 @@ final class AccountAdmin
         }
         DB::table('auth_accounts')->where('id', $id)->update(['status' => $status, 'version' => $version + 1]);
         if ($status === 'disabled') {
+            // Panel oturumlarini cagiran kapatir (panel veritabani, bkz. AccountController); her istek hesap durumunu da denetler.
             self::revokeSessions($id, 'panel_disabled');
-            // Panel uyesiyse panel oturumlari da kapanir; giris zaten hesap durumunu denetler.
-            Sessions::revokeAccount($id, 'account_disabled');
         } else {
             self::event($id, 'panel_enabled');
         }

@@ -7,11 +7,11 @@ use App\Panel\Http\Paging;
 use App\Panel\Http\Respond;
 use App\Panel\Http\Shape;
 use App\Panel\Support\Clock;
+use App\Panel\Support\PanelDb;
 use App\Panel\WorkItems\Queues;
 use App\Panel\WorkItems\WorkItems;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 /** Is kuyrugu ve ic notlar. */
 final class WorkController extends PanelController
@@ -27,7 +27,7 @@ final class WorkController extends PanelController
             'assignee' => ['nullable', 'string', 'max:128'], 'priority' => ['nullable', 'in:low,normal,high,urgent'],
             'overdue' => ['nullable', 'in:true,false'], 'subjectId' => ['nullable', 'string', 'max:191'],
         ]);
-        $q = DB::table('panel_work_items');
+        $q = PanelDb::table('panel_work_items');
         $status = $f['status'] ?? 'active';
         if ($status === 'active') {
             $q->whereIn('status', WorkItems::ACTIVE);
@@ -63,8 +63,8 @@ final class WorkController extends PanelController
 
     public function show(Request $request, string $id): JsonResponse
     {
-        $item = DB::table('panel_work_items')->where('id', $id)->first() ?? $this->notFound('İş');
-        $events = DB::table('panel_work_item_events')->where('work_item_id', $id)->orderBy('id')->limit(200)->get();
+        $item = PanelDb::table('panel_work_items')->where('id', $id)->first() ?? $this->notFound('İş');
+        $events = PanelDb::table('panel_work_item_events')->where('work_item_id', $id)->orderBy('id')->limit(200)->get();
 
         return Respond::data(WorkItems::view($item) + ['events' => Shape::rows($events, ['details'], [], ['work_item_id'])]);
     }
@@ -106,7 +106,7 @@ final class WorkController extends PanelController
     public function notes(Request $request): JsonResponse
     {
         $f = $this->query($request, ['subjectType' => ['required', 'in:'.implode(',', self::SUBJECT_TYPES)], 'subjectId' => ['required', 'string', 'max:191']]);
-        $q = DB::table('panel_notes')->where('subject_type', $f['subjectType'])->where('subject_id', $f['subjectId'])->whereNull('deleted_at')->orderByDesc('created_at');
+        $q = PanelDb::table('panel_notes')->where('subject_type', $f['subjectType'])->where('subject_id', $f['subjectId'])->whereNull('deleted_at')->orderByDesc('created_at');
         $paging = Paging::from($request);
         [$rows, $total] = $paging->run($q);
 
@@ -117,20 +117,20 @@ final class WorkController extends PanelController
     {
         $in = $this->input($request, ['subjectType' => ['required', 'in:'.implode(',', self::SUBJECT_TYPES)], 'subjectId' => ['required', 'string', 'max:191'], 'body' => ['required', 'string', 'min:2', 'max:4000']]);
         $id = Clock::uuid();
-        DB::table('panel_notes')->insert(['id' => $id, 'subject_type' => $in['subjectType'], 'subject_id' => $in['subjectId'], 'author_id' => $this->member($request)->accountId, 'body' => $in['body'], 'created_at' => Clock::db()]);
+        PanelDb::table('panel_notes')->insert(['id' => $id, 'subject_type' => $in['subjectType'], 'subject_id' => $in['subjectId'], 'author_id' => $this->member($request)->accountId, 'body' => $in['body'], 'created_at' => Clock::db()]);
         $this->audit($request, 'note.created', $in['subjectType'], $in['subjectId'], null, ['noteId' => $id]);
 
-        return Respond::created($this->note((object) DB::table('panel_notes')->where('id', $id)->first()));
+        return Respond::created($this->note((object) PanelDb::table('panel_notes')->where('id', $id)->first()));
     }
 
     public function deleteNote(Request $request, string $id): JsonResponse
     {
         $m = $this->member($request);
-        $n = DB::table('panel_notes')->where('id', $id)->whereNull('deleted_at')->first() ?? $this->notFound('Not');
+        $n = PanelDb::table('panel_notes')->where('id', $id)->whereNull('deleted_at')->first() ?? $this->notFound('Not');
         if ($n->author_id !== $m->accountId && ! $m->isSuperAdmin()) {
             throw new HttpError(403, 'Yalnız kendi notunu silebilirsin.');
         }
-        DB::table('panel_notes')->where('id', $id)->update(['deleted_at' => Clock::db(), 'deleted_by' => $m->accountId]);
+        PanelDb::table('panel_notes')->where('id', $id)->update(['deleted_at' => Clock::db(), 'deleted_by' => $m->accountId]);
         $this->audit($request, 'note.deleted', $n->subject_type, $n->subject_id, null, ['noteId' => $id]);
 
         return Respond::data(['deleted' => true]);
