@@ -37,6 +37,8 @@ final class CaseModeration
 
             return Policy::caseView($d->id, $v) + [
                 'moderationReason' => $r['reason'] ?? '',
+                // v2-03: kullanicinin sectigi bildirim nedeni (ek alan; yoksa null).
+                'reportReason' => $d->report_reason ?? null,
                 'reviewVersion' => $v['reviewVersion'],
                 'currentVersion' => $r['version'] ?? 1,
                 'review' => $r !== null ? Policy::publicReview($d->review_id, $r + ($pub !== null && $pub->reply_text !== null ? ['reply' => ['text' => $pub->reply_text]] : [])) : null,

@@ -19,6 +19,7 @@ final class Campaigns
         $queue = $p->get('queue') === 'true';
         $ownerView = $p->get('scope') === 'owner';
         $after = $p->get('after');
+        $v2 = ! $queue && $p->get('v') === '2';
         $business = null;
         $q = DB::table('ad_campaigns')->orderBy('id')->limit(21);
         if ($queue) {
@@ -47,8 +48,10 @@ final class Campaigns
                 throw new HttpError(409, 'Kayıt değişti. Sayfayı yenile.');
             }
 
+            $found = $item !== null ? [$item] : [];
+
             // JSON.stringify `business: undefined` alanini atar.
-            return ($business !== null ? ['business' => $business] : []) + ['items' => $item !== null ? [$item] : [], 'next' => null];
+            return ($business !== null ? ['business' => $business] : []) + ['items' => $v2 ? CampaignPhase::decorate($found) : $found, 'next' => null];
         }
         if ($after !== null && $after !== '') {
             $q->where('id', '>', $after);
@@ -62,7 +65,7 @@ final class Campaigns
             }
         }
 
-        return ($ownerView ? ['business' => $business] : []) + ['items' => $items, 'next' => count($rows) > 20 ? $rows[19]->id : null];
+        return ($ownerView ? ['business' => $business] : []) + ['items' => $v2 ? CampaignPhase::decorate($items) : $items, 'next' => count($rows) > 20 ? $rows[19]->id : null];
     }
 
     /** @param array<string,mixed> $a campaignAction ciktisi */

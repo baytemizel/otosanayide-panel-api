@@ -36,6 +36,30 @@ final class ReviewSummary
         return ['count' => $count, 'average' => $count === 0 ? null : round($sum / $count, 1)];
     }
 
+    /** v2-03 (W04/A04): yon puanlari => public_reviews kolonu. */
+    public const ASPECTS = ['quality' => 'quality', 'payment' => 'payment', 'cleanliness' => 'cleanliness', 'communication' => 'communication', 'priceTransparency' => 'price_transparency'];
+
+    /**
+     * v2-03: yayimlanmis yorumlarda her yonun ortalamasi (bir ondalik) ve puanlayan yorum sayisi. Yalniz tekil isletme ucu.
+     *
+     * @return array<string,array{average:?float,count:int}>
+     */
+    public static function aspects(string $businessId): array
+    {
+        $select = [];
+        foreach (self::ASPECTS as $key => $column) {
+            $select[] = "COUNT({$column}) as {$key}_n, COALESCE(SUM({$column}), 0) as {$key}_s";
+        }
+        $row = DB::table('public_reviews')->where('business_id', $businessId)->selectRaw(implode(', ', $select))->first();
+        $out = [];
+        foreach (self::ASPECTS as $key => $_) {
+            $n = (int) ($row->{$key.'_n'} ?? 0);
+            $out[$key] = ['average' => $n === 0 ? null : round((int) ($row->{$key.'_s'} ?? 0) / $n, 1), 'count' => $n];
+        }
+
+        return $out;
+    }
+
     public static function refresh(string $businessId): void
     {
         $s = self::compute($businessId);

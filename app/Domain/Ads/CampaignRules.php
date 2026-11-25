@@ -2,6 +2,7 @@
 
 namespace App\Domain\Ads;
 
+use App\Domain\Account\Membership;
 use App\Domain\Catalogue\Taxonomy;
 use App\Domain\Payments\F7;
 use App\Support\Query;
@@ -59,7 +60,7 @@ final class CampaignRules
     /** @param array<string,mixed> $b @param array<string,mixed>|null $m */
     public static function owns(string $uid, string $bid, array $b, ?array $m): bool
     {
-        return ($b['sample'] ?? null) !== true && ($b['ownership'] ?? null) === 'verified' && $m !== null && ($m['active'] ?? null) === true && ($m['userId'] ?? null) === $uid && ($m['businessId'] ?? null) === $bid && ($m['role'] ?? null) === 'owner';
+        return ($b['sample'] ?? null) !== true && ($b['ownership'] ?? null) === 'verified' && $m !== null && ($m['active'] ?? null) === true && ($m['userId'] ?? null) === $uid && ($m['businessId'] ?? null) === $bid && Membership::roleAllows($m['role'] ?? null, 'campaigns'); // v2-06: Yonetici + Finans
     }
 
     public static function scheduleEligible(string $startDate, int $now): bool
@@ -211,7 +212,8 @@ final class CampaignRules
         }
         $queue = $q->get('queue') === 'true';
         $owner = $q->get('scope') === 'owner';
-        $keys = $queue ? ['queue', 'status', 'after'] : ($owner ? ['businessId', 'scope', 'after', 'id'] : ['businessId', 'after']);
+        // v2-05: sahip listelerinde istege bagli `v=2` (evre + bitis tarihi); yonetici kuyrugunda yok.
+        $keys = $queue ? ['queue', 'status', 'after'] : ($owner ? ['businessId', 'scope', 'after', 'id', 'v'] : ['businessId', 'after', 'v']);
         foreach ($q->keys() as $k) {
             if (! in_array($k, $keys, true) || $q->count($k) !== 1) {
                 throw new RuntimeException('campaign_query');
@@ -223,6 +225,9 @@ final class CampaignRules
             }
         } else {
             self::documentId()->parse($q->get('businessId'));
+        }
+        if ($q->has('v') && $q->get('v') !== '2') {
+            throw new RuntimeException('campaign_query');
         }
         if ($q->has('scope') && ! $owner) {
             throw new RuntimeException('campaign_scope');

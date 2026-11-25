@@ -43,6 +43,11 @@ final class Schemas
             'wc' => Z::enum(['yes', 'no', 'unknown']),
             'wcCleanliness' => self::score()->optional(),
             'text' => Z::string()->trim()->min(10)->max(3000),
+            // v2-03 (W07 adim 2): istege bagli; eski govdeler aynen gecerli.
+            'communication' => self::score()->optional(),
+            'priceTransparency' => self::score()->optional(),
+            'service' => Z::string()->trim()->max(120)->optional(),
+            'visitMonth' => Z::string()->regex('/^\d{4}-(0[1-9]|1[0-2])$/D')->refine(self::visitMonthAllowed(...), 'Ziyaret ayı gelecekte veya 24 aydan eski olamaz.')->optional(),
         ])->refine(static fn (array $v): bool => $v['wc'] === 'yes' || ! array_key_exists('wcCleanliness', $v), 'WC temizliği sadece WC kullanımı belirtildiğinde puanlanabilir.');
     }
 
@@ -64,13 +69,33 @@ final class Schemas
         ])->refine(static fn (array $v): bool => $v['action'] !== 'edit' || $v['businessId'] === $v['review']['businessId'], 'Yorum işletmesi değiştirilemez.');
     }
 
+    /** v2-03: Europe/Istanbul takvim ayina gore 0-24 ay once. */
+    public static function visitMonthAllowed(string $month): bool
+    {
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('Europe/Istanbul'));
+        $diff = ((int) $now->format('Y') * 12 + (int) $now->format('n')) - ((int) substr($month, 0, 4) * 12 + (int) substr($month, 5, 2));
+
+        return $diff >= 0 && $diff <= 24;
+    }
+
+    /** v2-03 (B04): bildirim nedeni. `other` disindaki nedenle metin istege baglidir. */
+    public const REPORT_REASONS = ['fake', 'offensive', 'personal_data', 'not_customer', 'spam', 'other'];
+
     public static function caseInput(): Z
     {
         return Z::strictObject([
             'reviewId' => self::id(),
             'kind' => Z::enum(['report', 'appeal']),
-            'text' => Z::string()->trim()->min(10)->max(2000),
-        ]);
+            // Metin verilirse 10-2000; yalniz `other` disi bildirim nedeninde atlanabilir veya bos olabilir.
+            'text' => Z::string()->trim()->max(2000)->optional(),
+            'reason' => Z::enum(self::REPORT_REASONS)->optional(),
+        ])->refine(static fn (array $v): bool => $v['kind'] === 'report' || ! array_key_exists('reason', $v), 'Bildirim nedeni yalnız şikâyette seçilebilir.')
+            ->refine(static function (array $v): bool {
+                $n = \App\Support\Js::length($v['text'] ?? '');
+                $optional = in_array($v['reason'] ?? 'other', array_diff(self::REPORT_REASONS, ['other']), true);
+
+                return $n >= 10 || ($optional && $n === 0);
+            }, 'Açıklama en az 10 karakter olmalı.');
     }
 
     /** claimSchema; \s JS anlaminda Unicode bosluklari da icerir. */

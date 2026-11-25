@@ -4,7 +4,7 @@ Bu depodan hiçbir veritabanına bağlanılmadı; aşağıdaki veritabanı komut
 
 ## Kurulum sırası
 
-1. Ana API migration'ları ana veritabanında uygulanmış olmalı (K195: 14 migration uygulandı).
+1. Ana API migration'ları ana veritabanında uygulanmış olmalı (K195: ilk 14 migration uygulandı). K232 ile eşitlenen çekirdek (ana API `26b9e23`) ana API'nin altı `2026_11_21_*_v2_*` migration'ını da ister (yorum yön puanları, bildirim nedeni, ekip rolleri); bunlar uygulanmadan panelden yorum onayı hata verir. `panel:doctor --db` denetler.
 2. Panel veritabanı (K210): MySQL'de ayrı, boş bir veritabanı (`utf8mb4`, `utf8mb4_tr_0900_ai_ci`). Panelin çalışma kullanıcısının ana veritabanında ve panel veritabanında veri yetkisi (SELECT/INSERT/UPDATE/DELETE) olmalı; isteğe bağlı DDL kullanıcısı yalnız panel veritabanında. Veritabanı ve kullanıcı sunucuda kullanıcı tarafından açılır.
 3. `.env`: `.env.example`'dan; `APP_KEY` (`php artisan key:generate`), ana veritabanı `DB_*`, panel veritabanı `PANEL_DB_*` (en az `PANEL_DB_DATABASE`), `PANEL_WEB_ORIGIN`, `TRUSTED_PROXIES` ve **ana API ile aynı olması gereken** bayrak/depolama değerleri.
 4. Kontrol (bağlantısız): `php artisan panel:doctor` · `php artisan panel:core-check`
@@ -22,7 +22,7 @@ Bu depodan hiçbir veritabanına bağlanılmadı; aşağıdaki veritabanı komut
 
 | Komut | Yazar mı | Açıklama |
 |---|---|---|
-| `panel:doctor [--db]` | hayır | Yapılandırma denetimi (iki bağlantı tanımlı mı, ayrı mı); `--db` ile iki veritabanında salt okunur tablo varlığı, panel sayımları ve ana veritabanında hesabı bulunmayan üyeler |
+| `panel:doctor [--db]` | hayır | Yapılandırma denetimi (iki bağlantı tanımlı mı, ayrı mı); `--db` ile iki veritabanında salt okunur tablo varlığı, çekirdeğin istediği ana API migration'ları, panel sayımları ve ana veritabanında hesabı bulunmayan üyeler |
 | `panel:core-check [--source=] [--sync] [--write-manifest]` | dosya | Vendor edilen ana API çekirdeğinin yerel ve kaynak kayması. Veritabanı yok. `--sync` değişen dosyaları ana API'den kopyalar ve manifesti yeniler; yeni bağımlılık için `python3 scripts/core-closure.py ../otosanayide-api` |
 | `panel:permissions-sync [--apply]` | `--apply` | Yetki kataloğu ve sistem rollerini `config/panel_permissions.php` ile eşitler; katalogdan kalkan yetkiyi silmez, raporlar |
 | `panel:member-grant {email} --role=* --reason= [--name=] [--force] [--apply]` | `--apply` | Var olan hesabı panel üyesi yapar (ikinci kontrolü atlar). Etkin süper yönetici varken ayrıcalıklı rol `--force` ister |

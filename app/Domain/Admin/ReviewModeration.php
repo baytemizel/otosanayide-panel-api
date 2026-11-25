@@ -31,9 +31,19 @@ final class ReviewModeration
             'version' => (int) $d->version,
             'status' => $d->status,
             'automatic' => Moderator::automatic((string) $d->text, $d),
-        ], $visible);
+        ] + \App\Domain\Content\Reviews::v2Fields($d), $visible);
 
         return ['reviews' => $reviews, 'nextCursor' => count($page) > 20 ? end($visible)->id : null, 'aiEnabled' => Moderator::aiEnabled()];
+    }
+
+    /**
+     * v2-03: yeni istege bagli alanlar satirdan aynen kopyalanir (yeniden dogrulanmaz; ziyaret ayi zamanla 24 ayi asabilir).
+     *
+     * @return array<string,mixed>
+     */
+    private static function v2Columns(\stdClass $row): array
+    {
+        return ['communication' => $row->communication ?? null, 'price_transparency' => $row->price_transparency ?? null, 'service' => $row->service ?? null, 'visit_month' => $row->visit_month ?? null];
     }
 
     /** @param array<string,mixed> $input reviewDecision ciktisi */
@@ -83,7 +93,7 @@ final class ReviewModeration
             if ($transition['status'] === 'approved') {
                 // tx.set: varsa eski yanit ve fotograflar da gider.
                 DB::table('public_reviews')->where('business_id', $bid)->where('review_id', $id)->delete();
-                DB::table('public_reviews')->insert(['business_id' => $bid, 'review_id' => $id, 'rating' => $validated['rating'], 'quality' => $validated['quality'] ?? null, 'payment' => $validated['payment'] ?? null, 'cleanliness' => $validated['cleanliness'] ?? null, 'wc_cleanliness' => $validated['wcCleanliness'] ?? null, 'resolved' => $validated['resolved'], 'wc' => $validated['wc'], 'text' => $validated['text'], 'reply_text' => null, 'published_at' => Ids::now()]);
+                DB::table('public_reviews')->insert(['business_id' => $bid, 'review_id' => $id, 'rating' => $validated['rating'], 'quality' => $validated['quality'] ?? null, 'payment' => $validated['payment'] ?? null, 'cleanliness' => $validated['cleanliness'] ?? null, 'wc_cleanliness' => $validated['wcCleanliness'] ?? null, 'resolved' => $validated['resolved'], 'wc' => $validated['wc'], 'text' => $validated['text'], 'reply_text' => null, 'published_at' => Ids::now()] + self::v2Columns($row));
                 \App\Domain\Catalogue\ReviewSummary::refresh($bid); // web-08
             }
             if ($transition['status'] === 'hidden') {

@@ -150,10 +150,13 @@ final class AdRules
         return $holds;
     }
 
-    /** metricEvent */
+    /** v2-05: olay turu => ad_metric_events bayragi / ad_campaign_metrics sayaci. view/click kaynaktaki v1 turleridir. */
+    public const METRIC_KINDS = ['view' => 'views', 'viewable' => 'viewable', 'click' => 'clicks', 'phone' => 'phone', 'directions' => 'directions'];
+
+    /** metricEvent (v2-05: viewable/phone/directions eklendi; v1 istemcisinin govdesi aynen gecerli) */
     public static function metricEvent(): Z
     {
-        return Z::strictObject(['token' => Z::string()->min(40)->max(1800)->regex('/^[A-Za-z0-9_-]+$/'), 'kind' => Z::enum(['view', 'click'])]);
+        return Z::strictObject(['token' => Z::string()->min(40)->max(1800)->regex('/^[A-Za-z0-9_-]+$/'), 'kind' => Z::enum(array_keys(self::METRIC_KINDS))]);
     }
 
     public static function metricQuery(): Z
@@ -185,6 +188,20 @@ final class AdRules
         $clicks = array_sum(array_column($rows, 'clicks'));
 
         return ['rows' => $rows, 'views' => $views, 'clicks' => $clicks, 'ctr' => $views ? F7::num(F7::round($clicks / $views * 10000) / 100) : null];
+    }
+
+    /**
+     * v2-05 metricSummary: v1 alanlarina ek olarak gorunur gosterim, telefon ve yol tarifi toplamlari.
+     *
+     * @param  list<array{date:string,views:int,viewable:int,clicks:int,phone:int,directions:int}>  $rows
+     * @return array<string,mixed>
+     */
+    public static function summaryV2(array $rows): array
+    {
+        $base = self::summary($rows);
+        $viewable = array_sum(array_column($rows, 'viewable'));
+
+        return ['rows' => $rows, 'views' => $base['views'], 'viewable' => $viewable, 'clicks' => $base['clicks'], 'phone' => array_sum(array_column($rows, 'phone')), 'directions' => array_sum(array_column($rows, 'directions')), 'ctr' => $base['ctr'], 'viewableRate' => $base['views'] ? F7::num(F7::round($viewable / $base['views'] * 10000) / 100) : null];
     }
 
     public static function reservationView(string $id, array $r, int $now): array

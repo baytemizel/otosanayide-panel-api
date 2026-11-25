@@ -19,7 +19,7 @@ Web / portal / mobil ───────────▶ otosanayide-api ──
 ```
 
 - **İki veritabanı (K210).** Panel, ana Otosanayide veritabanına (`DB_*`, varsayılan bağlantı) ve kendi panel veritabanına (`PANEL_DB_*`, `panel` bağlantısı) bağlanır. Ana API'nin tablolarını okur ve yönetim kararlarını ana veritabanına yazar. Kendi verisi yalnız panel veritabanındaki `panel_*` tablolarındadır (defter `panel_migrations`). Ana veritabanına migration yazmaz. İki veritabanı arasında join, yabancı anahtar ve ortak transaction yoktur; ayrıntı `docs/SCHEMA.md`.
-- **Aynı iş kuralları.** Moderasyon, sahiplik, katalog yayını, gizlilik, reklam ve marka finansı kararları ana API'nin alan çekirdeğiyle verilir: `app/Domain`, `app/Support`, `app/Exceptions`, `app/Jobs`, `app/Models` ana API `d4ed6f8` commit'inden **birebir kopyadır** (87 dosya, `core-manifest.json`). Böylece sürüm denetimi, hesap silme çerçeveleri (fence), kendi içeriğini inceleyememe, yorum toplamları, arama projeksiyonu ve CDN yansısı ana API ile aynı çalışır. Kopya elle değiştirilmez; `php artisan panel:core-check` kaymayı bildirir.
+- **Aynı iş kuralları.** Moderasyon, sahiplik, katalog yayını, gizlilik, reklam ve marka finansı kararları ana API'nin alan çekirdeğiyle verilir: `app/Domain`, `app/Support`, `app/Exceptions`, `app/Jobs`, `app/Models` ana API `26b9e23` commit'inden **birebir kopyadır** (90 dosya, `core-manifest.json`; K232 ile `d4ed6f8`'den eşitlendi). Böylece sürüm denetimi, hesap silme çerçeveleri (fence), kendi içeriğini inceleyememe, yorum toplamları, arama projeksiyonu ve CDN yansısı ana API ile aynı çalışır. Kopya elle değiştirilmez; `php artisan panel:core-check` kaymayı bildirir.
 - **Panel kendi katmanı.** Kimlik doğrulama (ayrı TOTP ve oturum), rol/yetki, denetim kaydı, ikinci kontrol (dört göz), iş kuyruğu, iç notlar, süreli destek erişimi, sınıflandırma listeleri, ayarlar ve istatistik anlık görüntüleri.
 - **Kuyruk.** Katalog yayını gibi kararlar ana API'nin `SyncBusinessMediaCdn` işini paylaşılan `jobs` tablosuna yazabilir; sınıf adı iki uygulamada aynıdır, ana API işçisi işler.
 
@@ -215,6 +215,6 @@ Panelde olmayanlar: marka görseli yükleme ve önizleme görüntüsü (`/api/ad
 | Bağımsız kod incelemesi (veritabanı yolları) | 10 bulgu düzeltildi: denetim kaydı istek kimliği uzunluğu, hassas yetkiyle ikinci kontrol atlatma, talebin konusunun onaylaması, panel üyesinin hesabının `accounts.manage` ile kapatılması, MFA tahmin sınırı, yenileme yarışı, iş kuyruğu yetkisi, reklam kampanyası `id` filtresi, çıkışta yenileme ailesi, boşta kalan oturum listesi ve sürüm metni |
 | PHPStan seviye 6 | Hatasız (vendor edilen `ActorResolver` için tek yol kısıtlı istisna) |
 | Pint | Panel dosyalarında temiz (çekirdek kopyası hariç) |
-| `panel:core-check` | 87 dosya ana API `d4ed6f8` ile aynı |
+| `panel:core-check` | K232 sonrası 90 dosya ana API `26b9e23` ile aynı (ilk sürüm: 87 dosya, `d4ed6f8`) |
 
 Yapılmayan: veritabanı bağlantısı (kullanıcı talimatı), migration ve seeder çalıştırma, giriş/MFA/yenileme akışının gerçek veritabanıyla denenmesi, çekirdek kararlarının panelden uçtan uca denenmesi, sunucu dağıtımı, panel ön yüzü.

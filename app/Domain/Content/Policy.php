@@ -2,6 +2,7 @@
 
 namespace App\Domain\Content;
 
+use App\Domain\Account\Membership;
 use App\Support\Js;
 use App\Support\ZodError;
 use RuntimeException;
@@ -37,7 +38,8 @@ final class Policy
 
     public static function affiliatedReviewer(string $uid, array $business, ?array $membership): bool
     {
-        return ($business['ownerUid'] ?? null) === $uid || (($membership['active'] ?? null) === true && ($membership['userId'] ?? null) === $uid && in_array((string) ($membership['role'] ?? ''), ['owner', 'staff'], true));
+        // v2-06: her rol isletmeyle iliskili sayilir (cikar catismasi).
+        return ($business['ownerUid'] ?? null) === $uid || (($membership['active'] ?? null) === true && ($membership['userId'] ?? null) === $uid && in_array((string) ($membership['role'] ?? ''), Membership::ROLES, true));
     }
 
     /** @return array{status:string,delta:int} */
@@ -110,7 +112,7 @@ final class Policy
     {
         return ($b['published'] ?? null) === true && ($b['sample'] ?? null) !== true && ($b['ownership'] ?? null) === 'verified'
             && ($m['active'] ?? null) === true && ($m['userId'] ?? null) === $uid && ($m['businessId'] ?? null) === $businessId
-            && in_array((string) ($m['role'] ?? ''), ['owner', 'staff'], true);
+            && Membership::roleAllows($m['role'] ?? null, 'replies');
     }
 
     public static function replyVersion(?array $previous, int $expected): int
@@ -322,19 +324,20 @@ final class Policy
 
     public static function mayEditOwnedProfile(string $uid, array $business, ?array $membership): bool
     {
-        return ($business['ownership'] ?? null) === 'verified' && ($membership['active'] ?? null) === true && ($membership['userId'] ?? null) === $uid && in_array((string) ($membership['role'] ?? ''), ['owner', 'staff'], true);
+        return ($business['ownership'] ?? null) === 'verified' && ($membership['active'] ?? null) === true && ($membership['userId'] ?? null) === $uid && Membership::roleAllows($membership['role'] ?? null, 'profile');
     }
 
     public static function ownsCampaignBusiness(string $uid, string $bid, array $b, ?array $m): bool
     {
-        return ($b['sample'] ?? null) !== true && ($b['ownership'] ?? null) === 'verified' && ($m['active'] ?? null) === true && ($m['userId'] ?? null) === $uid && ($m['businessId'] ?? null) === $bid && ($m['role'] ?? null) === 'owner';
+        // v2-06: Yonetici ve Finans reklam yonetir.
+        return ($b['sample'] ?? null) !== true && ($b['ownership'] ?? null) === 'verified' && ($m['active'] ?? null) === true && ($m['userId'] ?? null) === $uid && ($m['businessId'] ?? null) === $bid && Membership::roleAllows($m['role'] ?? null, 'campaigns');
     }
 
     public static function consoleMembershipId(string $uid, string $docId, array $m): ?string
     {
         $id = $m['businessId'] ?? null;
 
-        return self::isId($id) && $docId === $uid.'_'.$id && ($m['userId'] ?? null) === $uid && ($m['active'] ?? null) === true && in_array((string) ($m['role'] ?? ''), ['owner', 'staff'], true) ? $id : null;
+        return self::isId($id) && $docId === $uid.'_'.$id && ($m['userId'] ?? null) === $uid && ($m['active'] ?? null) === true && in_array((string) ($m['role'] ?? ''), Membership::ROLES, true) ? $id : null;
     }
 
     /** @param bool|'activation'|'campaigns' $profile */
@@ -354,7 +357,7 @@ final class Policy
             return null;
         }
         try {
-            return Schemas::consoleBranch()->parse((object) ['id' => $businessId, 'name' => $b['name'] ?? null, 'city' => $b['city'] ?? '', 'district' => $b['district'] ?? '', 'role' => $m['role'] ?? null]);
+            return Schemas::consoleBranch()->parse((object) ['id' => $businessId, 'name' => $b['name'] ?? null, 'city' => $b['city'] ?? '', 'district' => $b['district'] ?? '', 'role' => Membership::legacyRole($m['role'] ?? null)]);
         } catch (ZodError) {
             return null;
         }
@@ -388,7 +391,7 @@ final class Policy
             'brands' => $b['brands'] ?? [],
             'location' => $location === null ? null : (object) $location,
             'id' => $businessId,
-            'role' => $m['role'] ?? null,
+            'role' => Membership::legacyRole($m['role'] ?? null),
             'version' => $b['profileVersion'] ?? 0,
             'change' => $change === null ? null : (object) ['revisionId' => $change['revisionId'] ?? null, 'status' => $change['status'] ?? null, 'profile' => self::toObject($change['profile'] ?? null), 'reason' => $change['reason'] ?? ''],
         ];

@@ -82,6 +82,8 @@ final class ReplyModeration
                     throw new HttpError(400, 'Geçersiz yanıt.');
                 }
                 DB::table('public_reviews')->where('business_id', $bid)->where('review_id', $row->review_id)->update(['reply_text' => $reply['text']]);
+                // v2-03: ilk yayim ani bir kez yazilir; sonraki yeniden gonderim duzenleme sayilir (Replies::write).
+                DB::table('review_replies')->where('review_id', $id)->whereNull('first_published_at_ms')->update(['first_published_at_ms' => Ids::nowMs()]);
             }
             if ($transition['status'] === 'hidden' && $p !== null) {
                 DB::table('public_reviews')->where('business_id', $bid)->where('review_id', $row->review_id)->update(['reply_text' => null]);

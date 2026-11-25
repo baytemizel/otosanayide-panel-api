@@ -11,7 +11,8 @@ use Throwable;
 
 /**
  * Kurulum denetimi. Varsayilan: yalniz yapilandirma (baglanti yok). --db: iki veritabanina salt okunur baglanip
- * tablo varligi (ana veritabani: ana API sema on kosulu; panel veritabani: panel migration'lari) ve ana
+ * tablo varligi (ana veritabani: ana API sema on kosulu ve cekirdegin istedigi ana API migration'lari; panel
+ * veritabani: panel migration'lari) ve ana
  * veritabaninda hesabi bulunmayan panel uyeleri. Hicbir sey yazmaz.
  */
 final class Doctor extends Command
@@ -20,7 +21,13 @@ final class Doctor extends Command
 
     protected $description = 'Panel API yapilandirma ve sema on kosullarini denetler (yazmaz).';
 
-    private const MAIN_TABLES = ['auth_accounts', 'auth_sessions', 'auth_events', 'businesses', 'business_values', 'reviews', 'claims', 'business_changes', 'feature_activations', 'privacy_requests', 'notification_jobs', 'ad_campaigns', 'brand_campaigns', 'scheduled_runs', 'account_fences', 'jobs', 'failed_jobs', 'cache'];
+    /**
+     * Vendor edilen cekirdegin (ana API 26b9e23) okudugu/yazdigi kolonlar bu ana API migration'lariyla gelir
+     * (yorum yon puanlari, bildirim nedeni, ekip rolleri...). Uygulanmamissa panelden yorum onayi hata verir.
+     */
+    private const MAIN_MIGRATIONS = ['2026_11_21_100001_v2_requests', '2026_11_21_100002_v2_garage', '2026_11_21_100003_v2_reviews', '2026_11_21_100004_v2_account', '2026_11_21_100005_v2_ads_insights', '2026_11_21_100006_v2_team_roles_mfa'];
+
+    private const MAIN_TABLES = ['migrations', 'auth_accounts', 'auth_sessions', 'auth_events', 'businesses', 'business_values', 'reviews', 'claims', 'business_changes', 'feature_activations', 'privacy_requests', 'notification_jobs', 'ad_campaigns', 'brand_campaigns', 'scheduled_runs', 'account_fences', 'jobs', 'failed_jobs', 'cache'];
 
     private const PANEL_TABLES = ['panel_roles', 'panel_permissions', 'panel_role_permissions', 'panel_members', 'panel_member_roles', 'panel_mfa_factors', 'panel_login_challenges', 'panel_sessions', 'panel_access_tokens', 'panel_audit_logs', 'panel_work_items', 'panel_work_item_events', 'panel_notes', 'panel_approvals', 'panel_support_grants', 'panel_settings', 'panel_taxonomy_categories', 'panel_taxonomy_services', 'panel_taxonomy_aliases', 'panel_taxonomy_cities', 'panel_taxonomy_districts', 'panel_stat_snapshots'];
 
@@ -64,9 +71,12 @@ final class Doctor extends Command
         }
         $missingMain = array_values(array_filter(self::MAIN_TABLES, static fn (string $t): bool => ! Schema::hasTable($t)));
         $missingPanel = array_values(array_filter(self::PANEL_TABLES, static fn (string $t): bool => ! Schema::connection(PanelDb::CONNECTION)->hasTable($t)));
-        $this->table(['Şema', 'Eksik tablo'], [
-            ['Ana veritabanı (ön koşul)', $missingMain === [] ? 'yok' : implode(', ', $missingMain)],
-            ['Panel veritabanı', $missingPanel === [] ? 'yok' : implode(', ', $missingPanel)],
+        $missingMigrations = in_array('migrations', $missingMain, true) ? self::MAIN_MIGRATIONS
+            : array_values(array_diff(self::MAIN_MIGRATIONS, DB::table('migrations')->whereIn('migration', self::MAIN_MIGRATIONS)->pluck('migration')->all()));
+        $this->table(['Şema', 'Eksik'], [
+            ['Ana veritabanı tabloları (ön koşul)', $missingMain === [] ? 'yok' : implode(', ', $missingMain)],
+            ['Ana API migration\'ları (çekirdek ön koşulu)', $missingMigrations === [] ? 'yok' : implode(', ', $missingMigrations)],
+            ['Panel veritabanı tabloları', $missingPanel === [] ? 'yok' : implode(', ', $missingPanel)],
         ]);
         $orphans = [];
         if ($missingPanel === []) {
@@ -86,7 +96,7 @@ final class Doctor extends Command
             }
         }
 
-        return $missingMain === [] && $missingPanel === [] && $orphans === [] ? self::SUCCESS : self::FAILURE;
+        return $missingMain === [] && $missingMigrations === [] && $missingPanel === [] && $orphans === [] ? self::SUCCESS : self::FAILURE;
     }
 
     private static function describe(string $connection): string

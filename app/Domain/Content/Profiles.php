@@ -2,6 +2,7 @@
 
 namespace App\Domain\Content;
 
+use App\Domain\Account\Membership;
 use App\Domain\Auth\Actor;
 use App\Domain\Catalogue\OpeningHours;
 use App\Exceptions\HttpError;
@@ -37,7 +38,7 @@ final class Profiles
         $out = [];
         foreach ($members as $row) {
             $m = Docs::membership($row);
-            if (($m['active'] ?? null) !== true || ! in_array($m['role'] ?? null, ['owner', 'staff'], true)) {
+            if (($m['active'] ?? null) !== true || ! Membership::roleAllows($m['role'] ?? null, 'profile')) {
                 continue;
             }
             $id = $m['businessId'];

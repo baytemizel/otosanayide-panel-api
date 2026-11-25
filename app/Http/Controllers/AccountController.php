@@ -256,7 +256,7 @@ final class AccountController extends PanelController
         return Respond::data([
             'vehicles' => Shape::rows(DB::table('user_vehicles')->where('user_id', $id)->orderBy('id')->get(), [], ['archived'], ['user_id']),
             'maintenance' => Shape::rows(DB::table('user_maintenance')->where('user_id', $id)->orderByDesc('date')->limit(100)->get(), ['attachment_ids'], [], ['user_id']),
-            'reminders' => Shape::rows(DB::table('user_reminders')->where('user_id', $id)->orderBy('due_date')->limit(100)->get(), [], ['completed', 'channel_push', 'channel_email', 'channels_set'], ['user_id']),
+            'reminders' => Shape::rows(DB::table('user_reminders')->where('user_id', $id)->orderBy('due_date')->limit(100)->get(), ['advance_days_list'], ['completed', 'channel_push', 'channel_email', 'channels_set', 'enabled'], ['user_id']),
             'backup' => Shape::row(DB::table('garage_backups')->where('user_id', $id)->first(['revision', 'updated_at_iso'])),
             'recycle' => Shape::row(DB::table('garage_recycle')->where('user_id', $id)->first(['state', 'revision', 'changed_at_iso', 'purge_after_iso'])),
         ]);
